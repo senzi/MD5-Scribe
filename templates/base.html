@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}MD5-Scribe{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <span class="logo">MD5-Scribe</span>
+            <span class="tagline">64轮手算验证系统</span>
+        </div>
+        <div class="nav-links">
+            <a href="{{ url_for('index') }}">首页</a>
+            {% if step_id is defined %}
+            <a href="{{ url_for('step_control', step_id=step_id) }}">控制台</a>
+            <a href="{{ url_for('step_print', step_id=step_id) }}" target="_blank">打印工单</a>
+            <a href="{{ url_for('step_verify', step_id=step_id) }}">验证</a>
+            {% endif %}
+        </div>
+    </nav>
+
+    <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="flash flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <p>MD5-Scribe &copy; 2025 — 纯物理手算验证系统</p>
+    </footer>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

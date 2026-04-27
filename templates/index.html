@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}MD5-Scribe - 首页{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <h1>MD5-Scribe</h1>
+    <p class="subtitle">一步一步，手算验证 MD5 的 64 轮逻辑运算</p>
+</div>
+
+<div class="card input-card">
+    <h2>开始新的验证</h2>
+    <form action="{{ url_for('init_state') }}" method="POST" class="input-form">
+        <div class="form-group">
+            <label for="message">输入字符串</label>
+            <input type="text" id="message" name="message" placeholder="例如: hello" required autofocus>
+            <small>系统将计算该字符串的 MD5，并引导您逐轮手算验证。</small>
+        </div>
+        <button type="submit" class="btn btn-primary">初始化并开始</button>
+    </form>
+</div>
+
+<div class="info-grid">
+    <div class="info-card">
+        <h3>1. 初始化</h3>
+        <p>输入任意字符串，后端自动完成消息填充（Padding）并进入 Step 0。</p>
+    </div>
+    <div class="info-card">
+        <h3>2. 打印工单</h3>
+        <p>每一轮提供详尽的原子运算工作表，包含二进制/十六进制对照和计算格子。</p>
+    </div>
+    <div class="info-card">
+        <h3>3. 手算验证</h3>
+        <p>用铅笔在 PDF 上完成计算，然后在网页表单回填结果，系统即时校验。</p>
+    </div>
+    <div class="info-card">
+        <h3>4. 生成报告</h3>
+        <p>完成全部 64 轮后，生成 Markdown 报告，分析错误率和计算时间线。</p>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+
+{% block title %}Step {{ step_id }} — 打印工单{% endblock %}
+
+{% block extra_head %}
+<style>
+    @media print {
+        .navbar, .footer, .print-controls { display: none !important; }
+        body { background: white; }
+        .print-page { page-break-after: always; border: none; box-shadow: none; }
+        .print-page:last-child { page-break-after: auto; }
+    }
+    @media screen {
+        .print-page { background: white; border: 1px solid #ddd; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="print-controls">
+    <h2>打印工单预览</h2>
+    <p>请使用浏览器“打印为 PDF”功能（Ctrl+P 或 Cmd+P）保存此工单。</p>
+    <button onclick="window.print()" class="btn btn-primary">🖨️ 立即打印</button>
+</div>
+
+<!-- Page 1: Worksheet -->
+<div class="print-page">
+    <div class="print-header">
+        <div class="print-title">MD5-Scribe 手算工单</div>
+        <div class="print-meta">
+            <span>Step: <strong>{{ step_id }} / {{ total - 1 }}</strong></span>
+            <span>函数: <strong>{{ step_data.logic_func }}</strong></span>
+            <span>s = <strong>{{ step_data.s }}</strong></span>
+        </div>
+    </div>
+
+    <div class="print-section">
+        <h3>原始消息</h3>
+        <div class="mono">{{ message }}</div>
+        <div class="mono small">{{ message.encode('utf-8').hex().upper() }}</div>
+    </div>
+
+    <div class="print-section">
+        <h3>本轮输入寄存器</h3>
+        <div class="registers-compact">
+            {% for reg, name in zip(registers, ['A', 'B', 'C', 'D']) %}
+            <div class="reg-col">
+                <div class="reg-col-name">{{ name }}</div>
+                <div class="reg-col-hex">{{ hex32(reg) }}</div>
+                <div class="reg-col-bin">{{ bin32(reg) }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="print-section">
+        <h3>常量与消息字</h3>
+        <div class="const-grid">
+            <div>M_j[{{ step_data.mj_idx }}] = <span class="mono">{{ hex32(step_data.mj) }}</span></div>
+            <div>K_i = <span class="mono">{{ hex32(step_data.ki) }}</span></div>
+            <div>s = <span class="mono">{{ step_data.s }}</span> 位</div>
+        </div>
+    </div>
+
+    <!-- Step 01: Logic Function -->
+    <div class="worksheet-block">
+        <div class="ws-title">步骤 01 — 逻辑函数 f = {{ step_data.logic_func }}(B, C, D)</div>
+        <div class="ws-subtitle">B, C, D 的二进制/十六进制对照</div>
+        <table class="bit-table">
+            <tr>
+                <th>寄存器</th>
+                {% for i in range(32) %}
+                <th class="bit-index">{{ 31 - i }}</th>
+                {% endfor %}
+            </tr>
+            <tr>
+                <td class="reg-label">B</td>
+                {% for bit in bin32(registers[1]) %}
+                <td class="bit-cell">{{ bit }}</td>
+                {% endfor %}
+            </tr>
+            <tr>
+                <td class="reg-label">C</td>
+                {% for bit in bin32(registers[2]) %}
+                <td class="bit-cell">{{ bit }}</td>
+                {% endfor %}
+            </tr>
+            <tr>
+                <td class="reg-label">D</td>
+                {% for bit in bin32(registers[3]) %}
+                <td class="bit-cell">{{ bit }}</td>
+                {% endfor %}
+            </tr>
+            <tr class="result-row">
+                <td class="reg-label">f</td>
+                {% for bit in bin32(step_data.f_val) %}
+                <td class="bit-cell result">{{ bit }}</td>
+                {% endfor %}
+            </tr>
+        </table>
+        <div class="hex-grid">
+            <div class="hex-row">
+                <span>f (Hex):</span>
+                {% for _ in range(8) %}
+                <div class="hex-box">
+                    <div class="carry-tick">☐</div>
+                    <div class="hex-char"></div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 02: T1 = A + f -->
+    <div class="worksheet-block">
+        <div class="ws-title">步骤 02 — 累加 T1 = A + f</div>
+        <div class="addition-layout">
+            <div class="add-row">
+                <span class="add-label">A</span>
+                {% for ch in hex32(registers[0]) %}
+                <div class="hex-char-disp">{{ ch }}</div>
+                {% endfor %}
+            </div>
+            <div class="add-row">
+                <span class="add-label">+ f</span>
+                {% for ch in hex32(step_data.f_val) %}
+                <div class="hex-char-disp">{{ ch }}</div>
+                {% endfor %}
+            </div>
+            <div class="add-divider"></div>
+            <div class="add-row result">
+                <span class="add-label">T1</span>
+                {% for _ in range(8) %}
+                <div class="hex-box">
+                    <div class="carry-tick">☐</div>
+                    <div class="hex-char"></div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 03: T1 + M_j + K_i -->
+    <div class="worksheet-block">
+        <div class="ws-title">步骤 03 — 常量注入 T3 = T1 + M_j + K_i</div>
+        <div class="addition-layout">
+            <div class="add-row">
+                <span class="add-label">T1</span>
+                {% for _ in range(8) %}
+                <div class="hex-box"><div class="carry-tick">☐</div><div class="hex-char"></div></div>
+                {% endfor %}
+            </div>
+            <div class="add-row">
+                <span class="add-label">+ M_j</span>
+                {% for ch in hex32(step_data.mj) %}
+                <div class="hex-char-disp">{{ ch }}</div>
+                {% endfor %}
+            </div>
+            <div class="add-row">
+                <span class="add-label">+ K_i</span>
+                {% for ch in hex32(step_data.ki) %}
+                <div class="hex-char-disp">{{ ch }}</div>
+                {% endfor %}
+            </div>
+            <div class="add-divider"></div>
+            <div class="add-row result">
+                <span class="add-label">T3</span>
+                {% for _ in range(8) %}
+                <div class="hex-box">
+                    <div class="carry-tick">☐</div>
+                    <div class="hex-char"></div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 04: Rotate Left -->
+    <div class="worksheet-block">
+        <div class="ws-title">步骤 04 — 循环左移 ROT = RotateLeft(T3, {{ step_data.s }})</div>
+        <div class="rotate-instruction">
+            将 T3 的 32 位二进制向左循环移动 <strong>{{ step_data.s }}</strong> 位。
+            在下方格子中重新排列各位。
+        </div>
+        <div class="bit-grid-32">
+            {% for i in range(32) %}
+            <div class="bit-slot">
+                <div class="bit-pos">{{ i }}</div>
+                <div class="bit-value"></div>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="hex-row-result">
+            <span>ROT (Hex):</span>
+            {% for _ in range(8) %}
+            <div class="hex-box">
+                <div class="carry-tick">☐</div>
+                <div class="hex-char"></div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Step 05: B_new = ROT + B -->
+    <div class="worksheet-block">
+        <div class="ws-title">步骤 05 — 最终结果 B_new = ROT + B</div>
+        <div class="addition-layout">
+            <div class="add-row">
+                <span class="add-label">ROT</span>
+                {% for _ in range(8) %}
+                <div class="hex-box"><div class="carry-tick">☐</div><div class="hex-char"></div></div>
+                {% endfor %}
+            </div>
+            <div class="add-row">
+                <span class="add-label">+ B</span>
+                {% for ch in hex32(registers[1]) %}
+                <div class="hex-char-disp">{{ ch }}</div>
+                {% endfor %}
+            </div>
+            <div class="add-divider"></div>
+            <div class="add-row result">
+                <span class="add-label">B_new</span>
+                {% for _ in range(8) %}
+                <div class="hex-box">
+                    <div class="carry-tick">☐</div>
+                    <div class="hex-char"></div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Page 2: Reference -->
+<div class="print-page">
+    <div class="print-header">
+        <div class="print-title">附录 — 十六进制-二进制对照表</div>
+    </div>
+    <div class="ref-grid">
+        {% for i in range(16) %}
+        <div class="ref-item">
+            <div class="ref-hex">{{ "0123456789ABCDEF"[i] }}</div>
+            <div class="ref-bin">{{ '{:04b}'.format(i) }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="ref-notes">
+        <h4>逻辑函数速查</h4>
+        <div class="func-ref">
+            <div><strong>F(B,C,D)</strong> = (B ∧ C) ∨ (¬B ∧ D)</div>
+            <div><strong>G(B,C,D)</strong> = (B ∧ D) ∨ (C ∧ ¬D)</div>
+            <div><strong>H(B,C,D)</strong> = B ⊕ C ⊕ D</div>
+            <div><strong>I(B,C,D)</strong> = C ⊕ (B ∨ ¬D)</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
