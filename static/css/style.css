@@ -927,6 +927,37 @@ code {
     word-break: break-all;
 }
 
+.final-register-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.75rem;
+}
+
+.final-byte-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-family: var(--mono);
+}
+
+.final-byte-row {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.byte-arrow {
+    width: 1.5rem;
+    text-align: center;
+    color: var(--muted);
+}
+
+.digest-grid {
+    display: grid;
+    grid-template-columns: repeat(32, 1.8rem);
+    gap: 0.25rem;
+}
+
 .chart-bars {
     display: flex;
     flex-direction: column;
@@ -1051,6 +1082,14 @@ code {
 
     .ref-grid {
         grid-template-columns: repeat(4, 1fr);
+    }
+
+    .final-register-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .digest-grid {
+        grid-template-columns: repeat(16, 1.8rem);
     }
 
     .add-divider {

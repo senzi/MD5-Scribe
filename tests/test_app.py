@@ -42,6 +42,15 @@ class TestClient:
     def get_report(self):
         return self.client.get("/report")
 
+    def get_final_print(self):
+        return self.client.get("/final/print")
+
+    def get_final_verify(self):
+        return self.client.get("/final/verify")
+
+    def post_final_verify(self, digest):
+        return self.client.post("/final/verify", data={"digest": digest}, follow_redirects=True)
+
     def get_api_state(self):
         return self.client.get("/api/state")
 
@@ -126,6 +135,40 @@ def test_report_page():
     print("OK test_report_page")
 
 
+def test_final_print_requires_completed_rounds():
+    client = TestClient()
+    client.post_init("final_locked")
+    rv = client.get_final_print()
+    assert rv.status_code in (200, 302)
+    assert "请先完成全部".encode() in rv.data or rv.status_code == 302
+    print("OK test_final_print_requires_completed_rounds")
+
+
+def test_final_verify_correct_digest():
+    client = TestClient()
+    client.post_init("final_digest")
+    state = app.get_state()
+    state.completed_steps = set(range(len(state.steps)))
+    digest = state.get_final_digest()
+    rv = client.post_final_verify(digest.upper())
+    assert rv.status_code == 200
+    assert "计算报告".encode() in rv.data
+    assert app.get_state().final_verified is True
+    print("OK test_final_verify_correct_digest")
+
+
+def test_final_verify_wrong_digest():
+    client = TestClient()
+    client.post_init("final_wrong")
+    state = app.get_state()
+    state.completed_steps = set(range(len(state.steps)))
+    rv = client.post_final_verify("0" * 32)
+    assert rv.status_code == 200
+    assert "结果不匹配".encode() in rv.data
+    assert app.get_state().final_verified is False
+    print("OK test_final_verify_wrong_digest")
+
+
 def test_api_state():
     client = TestClient()
     client.post_init("api_test")
@@ -177,6 +220,9 @@ if __name__ == "__main__":
     test_verify_wrong_atoms()
     test_step_unlocking()
     test_report_page()
+    test_final_print_requires_completed_rounds()
+    test_final_verify_correct_digest()
+    test_final_verify_wrong_digest()
     test_api_state()
     test_verify_hex_prefix()
     test_verify_decimal_input()

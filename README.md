@@ -13,6 +13,7 @@ A human-AI collaborative system for learning and checking manual MD5 computation
   - `T3 = T2 + K_i`
   - `ROT = RotateLeft(T3, s)`
   - `B_new = ROT + B`
+- Adds a final worksheet and verification step for little-endian A/B/C/D byte ordering and digest concatenation.
 - Includes the hex/binary reference appendix only on the first printable worksheet.
 
 ## Setup
@@ -50,3 +51,5 @@ python tests/test_md5_logic.py
 ## Worksheet Notes
 
 The printable worksheet is designed for hand calculation. The `f` result, `T1`, `T2`, `T3`, `ROT`, and `B_new` fields are left blank where the learner is expected to fill them in. Rotation bit grids are shown from bit 31 on the left to bit 0 on the right so that binary-to-hex grouping stays natural.
+
+After all 64 rounds are complete, the final worksheet shows the final `A`, `B`, `C`, and `D` registers and leaves space to reverse each 32-bit word by byte before concatenating the final 128-bit MD5 digest.

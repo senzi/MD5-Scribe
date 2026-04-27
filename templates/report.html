@@ -24,6 +24,10 @@
             <div class="summary-value">{{ completed }} / {{ total }}</div>
         </div>
         <div class="summary-item">
+            <div class="summary-label">最终拼接验证</div>
+            <div class="summary-value">{{ "已完成" if final_verified else "未完成" }}</div>
+        </div>
+        <div class="summary-item">
             <div class="summary-label">总错误数</div>
             <div class="summary-value">{{ logs | length }}</div>
         </div>
@@ -109,6 +113,8 @@
 </div>
 
 <div class="actions">
+    <a href="{{ url_for('final_print') }}" target="_blank" class="btn btn-secondary">最终工单</a>
+    <a href="{{ url_for('final_verify') }}" class="btn btn-secondary">最终验证</a>
     <a href="{{ url_for('index') }}" class="btn btn-primary">重新开始</a>
 </div>
 {% endblock %}

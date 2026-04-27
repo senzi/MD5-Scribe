@@ -52,6 +52,10 @@ def url_for(endpoint, **values):
         return f"/step/{values.get('step_id', 0)}/print"
     if endpoint == "step_verify":
         return f"/step/{values.get('step_id', 0)}/verify"
+    if endpoint == "final_print":
+        return "/final/print"
+    if endpoint == "final_verify":
+        return "/final/verify"
     if endpoint == "final_report":
         return "/report"
     parts = [""]
@@ -180,7 +184,7 @@ class TestClient:
     def _match(self, rule, path):
         import re
         pattern = rule
-        pattern = pattern.replace("/", "\/")
+        pattern = pattern.replace("/", r"\/")
         pattern = re.sub(r"<int:(\w+)>", r"{{INT:\1}}", pattern)
         pattern = re.sub(r"<(\w+)>", lambda m: f"(?P<{m.group(1)}>[^/]+)", pattern)
         pattern = re.sub(r"\{\{INT:(\w+)\}\}", lambda m: f"(?P<{m.group(1)}>\\d+)", pattern)

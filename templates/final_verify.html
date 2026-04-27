@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}最终 MD5 验证{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <h1>最终 MD5 验证</h1>
+    <p class="subtitle">将最终 A/B/C/D 按 little-endian 字节顺序拼接。</p>
+</div>
+
+<div class="card">
+    <h2>最终寄存器</h2>
+    <div class="summary-grid">
+        {% for row in register_rows %}
+        <div class="summary-item">
+            <div class="summary-label">{{ row.name }}</div>
+            <div class="summary-value mono">{{ row.word }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+{% if verification %}
+<div class="card verification-result">
+    <h2>验证结果</h2>
+    {% if verification.ok %}
+    <div class="atom-check atom-ok">
+        <div class="atom-header">
+            <span class="atom-name">最终 MD5</span>
+            <span class="atom-badge badge-ok">正确</span>
+        </div>
+    </div>
+    {% else %}
+    <div class="atom-check atom-error">
+        <div class="atom-header">
+            <span class="atom-name">最终 MD5</span>
+            <span class="atom-badge badge-error">错误</span>
+        </div>
+        <div class="atom-detail">
+            {% if not verification.format_ok %}
+            <p>请输入 32 位十六进制字符串。</p>
+            {% else %}
+            <p>结果不匹配。请重点检查每个 32 位寄存器内部的字节反序，以及 A, B, C, D 的拼接顺序。</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card verify-form-card">
+    <h2>输入最终 MD5</h2>
+    <form method="POST" action="{{ url_for('final_verify') }}" class="verify-form">
+        <div class="form-group atom-group">
+            <label for="digest">MD5 Digest</label>
+            <input
+                type="text"
+                id="digest"
+                name="digest"
+                class="mono input-hex"
+                placeholder="32位十六进制"
+                value="{{ answer }}"
+                maxlength="34"
+            >
+            <small>例如将 A=01234567 写入输出时，应填作 67452301。</small>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">提交验证</button>
+            <a href="{{ url_for('final_print') }}" target="_blank" class="btn btn-secondary">查看最终工单</a>
+        </div>
+    </form>
+</div>
+
+<div class="step-nav">
+    <a href="{{ url_for('step_control', step_id=last_step_id) }}" class="btn btn-small">返回最后一轮</a>
+    <a href="{{ url_for('final_report') }}" class="btn btn-small">查看报告</a>
+</div>
+{% endblock %}

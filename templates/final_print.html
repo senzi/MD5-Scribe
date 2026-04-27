@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}最终 MD5 工单{% endblock %}
+
+{% block extra_head %}
+<style>
+    @media print {
+        .navbar, .footer, .print-controls { display: none !important; }
+        body { background: white; }
+        .print-page { border: none; box-shadow: none; }
+    }
+    @media screen {
+        .print-page { background: white; border: 1px solid #ddd; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="print-controls">
+    <h2>最终 MD5 工单预览</h2>
+    <p>请使用浏览器“打印为 PDF”功能（Ctrl+P 或 Cmd+P）保存此工单。</p>
+    <button onclick="window.print()" class="btn btn-primary">打印</button>
+</div>
+
+<div class="print-page">
+    <div class="print-header">
+        <div class="print-title">MD5-Scribe 最终摘要工单</div>
+    </div>
+
+    <div class="print-section">
+        <h3>原始消息</h3>
+        <div class="mono">{{ message }}</div>
+        <div class="mono small">{{ message.encode('utf-8').hex().upper() }}</div>
+    </div>
+
+    <div class="print-section">
+        <h3>最终 A/B/C/D 寄存器</h3>
+        <div class="final-register-grid">
+            {% for row in register_rows %}
+            <div class="summary-item">
+                <div class="summary-label">{{ row.name }}</div>
+                <div class="summary-value mono">{{ row.word }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="worksheet-block">
+        <div class="ws-title">步骤 01 — 将每个 32 位寄存器按字节反序</div>
+        <div class="final-byte-table">
+            {% for row in register_rows %}
+            <div class="final-byte-row">
+                <span class="add-label">{{ row.name }}</span>
+                <div class="hex-char-disp">{{ row.word[:2] }}</div>
+                <div class="hex-char-disp">{{ row.word[2:4] }}</div>
+                <div class="hex-char-disp">{{ row.word[4:6] }}</div>
+                <div class="hex-char-disp">{{ row.word[6:] }}</div>
+                <span class="byte-arrow">→</span>
+                {% for _ in range(4) %}
+                <div class="hex-box"><div class="hex-char"></div></div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="worksheet-block">
+        <div class="ws-title">步骤 02 — 按 A, B, C, D 的输出字节顺序拼接最终 MD5</div>
+        <div class="digest-grid">
+            {% for _ in range(32) %}
+            <div class="hex-box"><div class="hex-char"></div></div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

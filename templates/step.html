@@ -88,7 +88,8 @@
     {% if step_id < total - 1 %}
     <a href="{{ url_for('step_control', step_id=step_id + 1) }}" class="btn btn-small">下一步 →</a>
     {% else %}
-    <a href="{{ url_for('final_report') }}" class="btn btn-small btn-accent">查看报告</a>
+    <a href="{{ url_for('final_print') }}" target="_blank" class="btn btn-small">最终工单</a>
+    <a href="{{ url_for('final_verify') }}" class="btn btn-small btn-accent">验证最终 MD5</a>
     {% endif %}
 </div>
 {% endblock %}

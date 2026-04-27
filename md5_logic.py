@@ -74,6 +74,7 @@ class MD5State:
         self.padded_msg: bytes = b''
         self.steps: List[Dict[str, Any]] = []
         self.completed_steps: set = set()
+        self.final_verified: bool = False
         self.start_times: Dict[int, float] = {}
         self.end_times: Dict[int, float] = {}
 
@@ -190,6 +191,7 @@ class MD5State:
             "final_digest": self.get_final_digest(),
             "steps": self.steps,
             "completed_steps": list(self.completed_steps),
+            "final_verified": self.final_verified,
             "start_times": self.start_times,
             "end_times": self.end_times,
         }
@@ -208,6 +210,7 @@ class MD5State:
         # Actually recalculate properly
         state.hash(bytes.fromhex(data["original_msg"]))
         state.completed_steps = set(data.get("completed_steps", []))
+        state.final_verified = bool(data.get("final_verified", False))
         state.start_times = {int(k): v for k, v in data.get("start_times", {}).items()}
         state.end_times = {int(k): v for k, v in data.get("end_times", {}).items()}
         return state

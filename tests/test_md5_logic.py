@@ -173,6 +173,7 @@ def test_state_serialization():
     state = MD5State()
     state.hash("serialize")
     state.completed_steps = {0, 1, 2}
+    state.final_verified = True
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         path = f.name
@@ -182,6 +183,7 @@ def test_state_serialization():
         restored = MD5State.from_json(path)
         assert restored.get_final_digest() == state.get_final_digest()
         assert restored.completed_steps == state.completed_steps
+        assert restored.final_verified == state.final_verified
     finally:
         os.unlink(path)
 

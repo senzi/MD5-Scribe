@@ -8,6 +8,9 @@ Routes:
   GET  /step/<n>/print           -> Printable worksheet (PDF mode)
   GET  /step/<n>/verify          -> Verification form
   POST /step/<n>/verify          -> Submit answers
+  GET  /final/print              -> Final digest worksheet
+  GET  /final/verify             -> Final digest verification form
+  POST /final/verify             -> Submit final digest
   GET  /report                   -> Final report
 """
 
@@ -73,6 +76,28 @@ def log_entry(step_index: int, expected: int, actual: int, atom_name: str):
             json.dump(logs, f, indent=2, ensure_ascii=False)
     except OSError:
         pass  # Fail silently if filesystem restricts writes
+
+
+def all_rounds_completed(state: MD5State) -> bool:
+    return state.completed_steps == set(range(len(state.steps)))
+
+
+def first_incomplete_step(state: MD5State) -> int:
+    for step_id in range(len(state.steps)):
+        if step_id not in state.completed_steps:
+            return step_id
+    return max(len(state.steps) - 1, 0)
+
+
+def final_register_rows(state: MD5State):
+    return [
+        {"name": name, "word": hex32(reg)}
+        for name, reg in zip(["A", "B", "C", "D"], state.registers)
+    ]
+
+
+def normalize_digest(raw: str) -> str:
+    return "".join(raw.strip().split()).lower().removeprefix("0x")
 
 # --- Routes ---
 
@@ -238,7 +263,7 @@ def step_verify(step_id: int):
             if next_step < total:
                 return redirect(url_for("step_control", step_id=next_step))
             else:
-                return redirect(url_for("final_report"))
+                return redirect(url_for("final_verify"))
 
         # Build detailed per-atom feedback
         verification = []
@@ -299,6 +324,56 @@ def step_verify(step_id: int):
     )
 
 
+@app.route("/final/print")
+def final_print():
+    state = ensure_state()
+    if not all_rounds_completed(state):
+        flash(f"请先完成全部 {len(state.steps)} 轮步骤，再生成最终摘要工单。", "error")
+        return redirect(url_for("step_control", step_id=first_incomplete_step(state)))
+
+    return render_template(
+        "final_print.html",
+        registers=state.registers,
+        register_rows=final_register_rows(state),
+        hex32=hex32,
+        message=state.original_msg.decode('utf-8', errors='replace'),
+    )
+
+
+@app.route("/final/verify", methods=["GET", "POST"])
+def final_verify():
+    state = ensure_state()
+    if not all_rounds_completed(state):
+        flash(f"请先完成全部 {len(state.steps)} 轮步骤，再验证最终 MD5。", "error")
+        return redirect(url_for("step_control", step_id=first_incomplete_step(state)))
+
+    expected = state.get_final_digest()
+    actual = ""
+    verification = None
+
+    if request.method == "POST":
+        actual = normalize_digest(request.form.get("digest", ""))
+        is_hex = len(actual) == 32 and all(c in "0123456789abcdef" for c in actual)
+        ok = is_hex and actual == expected
+        verification = {"ok": ok, "format_ok": is_hex, "actual": actual.upper()}
+
+        if ok:
+            state.final_verified = True
+            save_state(state)
+            flash("最终 MD5 拼接正确！", "success")
+            return redirect(url_for("final_report"))
+
+    return render_template(
+        "final_verify.html",
+        register_rows=final_register_rows(state),
+        last_step_id=len(state.steps) - 1,
+        hex32=hex32,
+        answer=actual.upper(),
+        verification=verification,
+        message=state.original_msg.decode('utf-8', errors='replace'),
+    )
+
+
 @app.route("/report")
 def final_report():
     state = ensure_state()
@@ -344,6 +419,7 @@ def final_report():
         error_counts=error_counts,
         timeline=timeline,
         final_digest=state.get_final_digest(),
+        final_verified=state.final_verified,
         message=state.original_msg.decode('utf-8', errors='replace'),
     )
 
@@ -358,6 +434,7 @@ def api_state():
     return jsonify({
         "steps_total": len(state.steps),
         "completed": list(state.completed_steps),
+        "final_verified": state.final_verified,
         "final_digest": state.get_final_digest(),
     })
 
