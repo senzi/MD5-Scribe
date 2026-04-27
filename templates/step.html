@@ -36,7 +36,11 @@
         <div class="register-box">
             <div class="reg-name">{{ name }}</div>
             <div class="reg-hex">{{ hex32(reg) }}</div>
-            <div class="reg-bin">{{ bin32(reg) }}</div>
+            {% set reg_bits = bin32(reg) %}
+            <div class="reg-bin">
+                <span>{{ reg_bits[:16] }}</span>
+                <span>{{ reg_bits[16:] }}</span>
+            </div>
         </div>
         {% endfor %}
     </div>

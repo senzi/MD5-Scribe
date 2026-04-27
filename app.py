@@ -12,6 +12,7 @@ Routes:
   GET  /final/verify             -> Final digest verification form
   POST /final/verify             -> Submit final digest
   GET  /report                   -> Final report
+  GET  /report/markdown          -> Markdown final report
 """
 
 import os
@@ -20,7 +21,7 @@ import time
 from datetime import datetime
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, session, flash, jsonify
+    url_for, session, flash, jsonify, Response
 )
 from md5_logic import MD5State, hex32, bin32, hex_to_binary_table
 
@@ -31,6 +32,7 @@ app.jinja_env.globals["zip"] = zip
 # In-memory store for active sessions (in production, use Redis or DB)
 STATE_STORE: dict = {}
 LOG_PATH = "session_log.json"
+REPORT_PATH = "final_report.md"
 
 # --- Helpers ---
 
@@ -78,6 +80,124 @@ def log_entry(step_index: int, expected: int, actual: int, atom_name: str):
         pass  # Fail silently if filesystem restricts writes
 
 
+def log_digest_entry(expected: str, actual: str):
+    """Append final digest verification failure to session_log.json."""
+    try:
+        diff_bits = None
+        if len(actual) == 32 and all(c in "0123456789abcdef" for c in actual):
+            diff_bits = bin(int(expected, 16) ^ int(actual, 16)).count("1")
+        logs = load_logs()
+        logs.append({
+            "timestamp": datetime.now().isoformat(),
+            "step_index": "final",
+            "atom_name": "Final MD5 digest",
+            "expected": expected.upper(),
+            "actual": actual.upper(),
+            "diff_bits": diff_bits if diff_bits is not None else "格式错误",
+        })
+        with open(LOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(logs, f, indent=2, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def reset_runtime_artifacts():
+    for path in (LOG_PATH, REPORT_PATH):
+        try:
+            if path == LOG_PATH:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump([], f, indent=2, ensure_ascii=False)
+            elif os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def load_logs():
+    try:
+        with open(LOG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def analyze_error_counts(logs):
+    error_counts = {"加法": 0, "逻辑函数": 0, "循环左移": 0, "最终拼接": 0, "其他": 0}
+    for log in logs:
+        name = log.get("atom_name", "")
+        if "A + f" in name or "T1 +" in name or "T2 +" in name or "ROT + B" in name:
+            error_counts["加法"] += 1
+        elif "Final" in name or "digest" in name.lower() or "MD5" in name:
+            error_counts["最终拼接"] += 1
+        elif "f" in name.lower() or "Func" in name:
+            error_counts["逻辑函数"] += 1
+        elif "Rotate" in name or "ROT" in name:
+            error_counts["循环左移"] += 1
+        else:
+            error_counts["其他"] += 1
+    return error_counts
+
+
+def build_timeline(state: MD5State):
+    timeline = []
+    for i in range(len(state.steps)):
+        if i in state.start_times:
+            end_t = state.end_times.get(i)
+            duration = round(end_t - state.start_times[i], 2) if end_t else None
+            timeline.append({"step": i, "duration": duration, "completed": i in state.completed_steps})
+    return timeline
+
+
+def write_markdown_report(state: MD5State, logs, error_counts, timeline):
+    total = len(state.steps)
+    lines = [
+        "# MD5-Scribe Final Report",
+        "",
+        f"- Original message: `{state.original_msg.decode('utf-8', errors='replace')}`",
+        f"- Final digest: `{state.get_final_digest()}`",
+        f"- Completed rounds: {len(state.completed_steps)} / {total}",
+        f"- Final digest verification: {'completed' if state.final_verified else 'not completed'}",
+        f"- Total logged errors: {len(logs)}",
+        "",
+        "## Error Analysis",
+        "",
+    ]
+    for name, count in error_counts.items():
+        lines.append(f"- {name}: {count}")
+    lines.extend(["", "## Timeline", ""])
+    if timeline:
+        lines.append("| Step | Completed | Duration |")
+        lines.append("| --- | --- | --- |")
+        for item in timeline:
+            duration = f"{item['duration']}s" if item["duration"] is not None else "in progress / not completed"
+            lines.append(f"| {item['step']} | {'yes' if item['completed'] else 'no'} | {duration} |")
+    else:
+        lines.append("No timing data recorded.")
+    lines.extend(["", "## Audit Trail", ""])
+    if logs:
+        lines.append("| Time | Step | Operation | Expected | Actual | Diff Bits |")
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for log in logs:
+            lines.append(
+                f"| {log.get('timestamp', '')} | {log.get('step_index', '')} | "
+                f"{log.get('atom_name', '')} | `{log.get('expected', '')}` | "
+                f"`{log.get('actual', '')}` | {log.get('diff_bits', '')} |"
+            )
+    else:
+        lines.append("No incorrect attempts were logged.")
+    lines.extend(["", "## Final Registers", ""])
+    for row in final_register_rows(state):
+        lines.append(f"- {row['name']}: `{row['word']}`")
+
+    markdown = "\n".join(lines) + "\n"
+    try:
+        with open(REPORT_PATH, "w", encoding="utf-8") as f:
+            f.write(markdown)
+    except OSError:
+        pass
+    return markdown
+
+
 def all_rounds_completed(state: MD5State) -> bool:
     return state.completed_steps == set(range(len(state.steps)))
 
@@ -120,12 +240,7 @@ def init_state():
     session["state_id"] = sid
     STATE_STORE[sid] = state
 
-    # Clear old log if starting fresh
-    if os.path.exists(LOG_PATH):
-        try:
-            os.remove(LOG_PATH)
-        except OSError:
-            pass
+    reset_runtime_artifacts()
 
     return redirect(url_for("step_control", step_id=0))
 
@@ -143,7 +258,6 @@ def step_control(step_id: int):
     is_unlocked = step_id in unlocked
 
     step_data = state.get_step(step_id)
-    prev_digest = state.hash(state.original_msg.decode('utf-8', errors='replace')) if step_id == 0 else None
 
     return render_template(
         "step.html",
@@ -152,7 +266,7 @@ def step_control(step_id: int):
         is_unlocked=is_unlocked,
         completed=state.completed_steps,
         step_data=step_data,
-        registers=state.registers,
+        registers=step_data["registers_before"],
         hex32=hex32,
         bin32=bin32,
         message=state.original_msg.decode('utf-8', errors='replace'),
@@ -362,6 +476,7 @@ def final_verify():
             save_state(state)
             flash("最终 MD5 拼接正确！", "success")
             return redirect(url_for("final_report"))
+        log_digest_entry(expected, actual)
 
     return render_template(
         "final_verify.html",
@@ -379,37 +494,10 @@ def final_report():
     state = ensure_state()
     total = len(state.steps)
 
-    # Load logs
-    logs = []
-    try:
-        with open(LOG_PATH, "r", encoding="utf-8") as f:
-            logs = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        logs = []
-
-    # Analyze error types
-    error_counts = {"加法": 0, "逻辑函数": 0, "循环左移": 0, "其他": 0}
-    for log in logs:
-        name = log.get("atom_name", "")
-        if "A + f" in name or "T1 +" in name or "T2 +" in name or "ROT + B" in name:
-            error_counts["加法"] += 1
-        elif "f" in name.lower() or "Func" in name:
-            error_counts["逻辑函数"] += 1
-        elif "Rotate" in name or "ROT" in name:
-            error_counts["循环左移"] += 1
-        else:
-            error_counts["其他"] += 1
-
-    # Build timeline
-    timeline = []
-    for i in range(total):
-        if i in state.start_times:
-            end_t = state.end_times.get(i)
-            if end_t:
-                duration = round(end_t - state.start_times[i], 2)
-            else:
-                duration = None
-            timeline.append({"step": i, "duration": duration, "completed": i in state.completed_steps})
+    logs = load_logs()
+    error_counts = analyze_error_counts(logs)
+    timeline = build_timeline(state)
+    write_markdown_report(state, logs, error_counts, timeline)
 
     return render_template(
         "report.html",
@@ -422,6 +510,16 @@ def final_report():
         final_verified=state.final_verified,
         message=state.original_msg.decode('utf-8', errors='replace'),
     )
+
+
+@app.route("/report/markdown")
+def markdown_report():
+    state = ensure_state()
+    logs = load_logs()
+    error_counts = analyze_error_counts(logs)
+    timeline = build_timeline(state)
+    markdown = write_markdown_report(state, logs, error_counts, timeline)
+    return Response(markdown, content_type="text/markdown; charset=utf-8")
 
 
 @app.route("/api/state")

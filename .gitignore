@@ -203,6 +203,10 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# MD5-Scribe runtime artifacts
+session_log.json
+final_report.md
+
 # Ruff stuff:
 .ruff_cache/
 

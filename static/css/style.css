@@ -396,7 +396,15 @@ body {
     font-size: 0.65rem;
     color: var(--muted);
     margin-top: 0.25rem;
-    word-break: break-all;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.reg-bin span {
+    display: block;
 }
 
 /* Params */

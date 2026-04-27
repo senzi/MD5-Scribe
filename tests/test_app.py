@@ -42,6 +42,9 @@ class TestClient:
     def get_report(self):
         return self.client.get("/report")
 
+    def get_markdown_report(self):
+        return self.client.get("/report/markdown")
+
     def get_final_print(self):
         return self.client.get("/final/print")
 
@@ -132,7 +135,27 @@ def test_report_page():
     rv = client.get_report()
     assert rv.status_code == 200
     assert "计算报告".encode() in rv.data
+    assert os.path.exists(app.REPORT_PATH)
     print("OK test_report_page")
+
+
+def test_markdown_report_route():
+    client = TestClient()
+    client.post_init("markdown_report")
+    rv = client.get_markdown_report()
+    assert rv.status_code == 200
+    assert b"MD5-Scribe Final Report" in rv.data
+    assert os.path.exists(app.REPORT_PATH)
+    print("OK test_markdown_report_route")
+
+
+def test_log_file_initialized():
+    client = TestClient()
+    client.post_init("log_init")
+    assert os.path.exists(app.LOG_PATH)
+    with open(app.LOG_PATH, "r", encoding="utf-8") as f:
+        assert json.load(f) == []
+    print("OK test_log_file_initialized")
 
 
 def test_final_print_requires_completed_rounds():
@@ -166,6 +189,9 @@ def test_final_verify_wrong_digest():
     assert rv.status_code == 200
     assert "结果不匹配".encode() in rv.data
     assert app.get_state().final_verified is False
+    with open(app.LOG_PATH, "r", encoding="utf-8") as f:
+        logs = json.load(f)
+    assert logs[-1]["atom_name"] == "Final MD5 digest"
     print("OK test_final_verify_wrong_digest")
 
 
@@ -220,6 +246,8 @@ if __name__ == "__main__":
     test_verify_wrong_atoms()
     test_step_unlocking()
     test_report_page()
+    test_markdown_report_route()
+    test_log_file_initialized()
     test_final_print_requires_completed_rounds()
     test_final_verify_correct_digest()
     test_final_verify_wrong_digest()

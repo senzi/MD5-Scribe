@@ -58,6 +58,8 @@ def url_for(endpoint, **values):
         return "/final/verify"
     if endpoint == "final_report":
         return "/report"
+    if endpoint == "markdown_report":
+        return "/report/markdown"
     parts = [""]
     for k, v in values.items():
         parts.append(f"{k}={v}")
