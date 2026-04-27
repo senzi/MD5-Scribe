@@ -31,6 +31,8 @@ app.jinja_env.globals["zip"] = zip
 
 # In-memory store for active sessions (in production, use Redis or DB)
 STATE_STORE: dict = {}
+CURRENT_STATE_ID = "current"
+STATE_PATH = "current_state.json"
 LOG_PATH = "session_log.json"
 REPORT_PATH = "final_report.md"
 
@@ -43,18 +45,53 @@ def get_state() -> MD5State | None:
     sid = get_state_id()
     if sid and sid in STATE_STORE:
         return STATE_STORE[sid]
+    state = load_current_state()
+    if state is not None:
+        session["state_id"] = CURRENT_STATE_ID
+        STATE_STORE[CURRENT_STATE_ID] = state
+        return state
     return None
 
 def save_state(state: MD5State):
-    sid = get_state_id()
+    state.updated_at = time.time()
+    sid = get_state_id() or CURRENT_STATE_ID
+    session["state_id"] = sid
     if sid:
         STATE_STORE[sid] = state
+    persist_current_state(state)
 
 def ensure_state() -> MD5State:
     state = get_state()
     if state is None:
         raise RuntimeError("No active MD5 session. Please start from the home page.")
     return state
+
+
+def load_current_state() -> MD5State | None:
+    if not os.path.exists(STATE_PATH):
+        return None
+    try:
+        return MD5State.from_json(STATE_PATH)
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        return None
+
+
+def persist_current_state(state: MD5State):
+    try:
+        state.to_json(STATE_PATH)
+    except OSError:
+        pass
+
+
+def clear_current_state():
+    STATE_STORE.pop(CURRENT_STATE_ID, None)
+    session.pop("state_id", None)
+    for path in (STATE_PATH, LOG_PATH, REPORT_PATH):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
 
 def log_entry(step_index: int, expected: int, actual: int, atom_name: str):
     """Append verification attempt to session_log.json."""
@@ -141,10 +178,25 @@ def analyze_error_counts(logs):
 def build_timeline(state: MD5State):
     timeline = []
     for i in range(len(state.steps)):
-        if i in state.start_times:
+        if (
+            i in state.start_times
+            or i in state.print_times
+            or i in state.verify_open_times
+            or i in state.verify_submit_times
+            or i in state.completed_steps
+        ):
+            start_t = state.start_times.get(i) or state.verify_open_times.get(i)
             end_t = state.end_times.get(i)
-            duration = round(end_t - state.start_times[i], 2) if end_t else None
-            timeline.append({"step": i, "duration": duration, "completed": i in state.completed_steps})
+            duration = round(end_t - start_t, 2) if start_t and end_t else None
+            timeline.append({
+                "step": i,
+                "duration": duration,
+                "completed": i in state.completed_steps,
+                "printed_at": state.print_times.get(i),
+                "verify_opened_at": state.verify_open_times.get(i),
+                "submitted_at": state.verify_submit_times.get(i),
+                "completed_at": state.end_times.get(i),
+            })
     return timeline
 
 
@@ -166,11 +218,21 @@ def write_markdown_report(state: MD5State, logs, error_counts, timeline):
         lines.append(f"- {name}: {count}")
     lines.extend(["", "## Timeline", ""])
     if timeline:
-        lines.append("| Step | Completed | Duration |")
-        lines.append("| --- | --- | --- |")
+        lines.append("| Step | Completed | Duration | Events |")
+        lines.append("| --- | --- | --- | --- |")
         for item in timeline:
             duration = f"{item['duration']}s" if item["duration"] is not None else "in progress / not completed"
-            lines.append(f"| {item['step']} | {'yes' if item['completed'] else 'no'} | {duration} |")
+            events = []
+            if item.get("printed_at"):
+                events.append(f"printed {format_time(item['printed_at'])}")
+            if item.get("verify_opened_at"):
+                events.append(f"verify opened {format_time(item['verify_opened_at'])}")
+            if item.get("submitted_at"):
+                events.append(f"submitted {format_time(item['submitted_at'])}")
+            lines.append(
+                f"| {item['step']} | {'yes' if item['completed'] else 'no'} | "
+                f"{duration} | {'; '.join(events)} |"
+            )
     else:
         lines.append("No timing data recorded.")
     lines.extend(["", "## Audit Trail", ""])
@@ -219,11 +281,24 @@ def final_register_rows(state: MD5State):
 def normalize_digest(raw: str) -> str:
     return "".join(raw.strip().split()).lower().removeprefix("0x")
 
+
+def format_time(ts):
+    if not ts:
+        return ""
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
 # --- Routes ---
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    state = get_state()
+    next_step = first_incomplete_step(state) if state else 0
+    return render_template(
+        "index.html",
+        current_state=state,
+        next_step=next_step,
+        format_time=format_time,
+    )
 
 
 @app.route("/init", methods=["POST"])
@@ -236,11 +311,13 @@ def init_state():
     state = MD5State()
     state.hash(msg)
 
-    sid = os.urandom(16).hex()
+    clear_current_state()
+    sid = CURRENT_STATE_ID
     session["state_id"] = sid
     STATE_STORE[sid] = state
 
     reset_runtime_artifacts()
+    save_state(state)
 
     return redirect(url_for("step_control", step_id=0))
 
@@ -283,6 +360,8 @@ def step_print(step_id: int):
 
     step_data = state.get_step(step_id)
     hex_bin_map = hex_to_binary_table()
+    state.print_times[step_id] = time.time()
+    save_state(state)
 
     return render_template(
         "print.html",
@@ -315,6 +394,8 @@ def step_verify(step_id: int):
     step_data = state.get_step(step_id)
 
     if request.method == "POST":
+        state.verify_submit_times[step_id] = time.time()
+        save_state(state)
         # Parse submitted atom answers
         answers = []
         errors = []
@@ -422,7 +503,8 @@ def step_verify(step_id: int):
     # Record start time for this step if not already recorded
     if step_id not in state.start_times:
         state.start_times[step_id] = time.time()
-        save_state(state)
+    state.verify_open_times[step_id] = time.time()
+    save_state(state)
 
     return render_template(
         "verify.html",
@@ -445,6 +527,9 @@ def final_print():
         flash(f"请先完成全部 {len(state.steps)} 轮步骤，再生成最终摘要工单。", "error")
         return redirect(url_for("step_control", step_id=first_incomplete_step(state)))
 
+    state.final_print_time = time.time()
+    save_state(state)
+
     return render_template(
         "final_print.html",
         registers=state.registers,
@@ -466,6 +551,8 @@ def final_verify():
     verification = None
 
     if request.method == "POST":
+        state.final_verify_submit_time = time.time()
+        save_state(state)
         actual = normalize_digest(request.form.get("digest", ""))
         is_hex = len(actual) == 32 and all(c in "0123456789abcdef" for c in actual)
         ok = is_hex and actual == expected
@@ -477,6 +564,9 @@ def final_verify():
             flash("最终 MD5 拼接正确！", "success")
             return redirect(url_for("final_report"))
         log_digest_entry(expected, actual)
+    else:
+        state.final_verify_open_time = time.time()
+        save_state(state)
 
     return render_template(
         "final_verify.html",
@@ -508,6 +598,7 @@ def final_report():
         timeline=timeline,
         final_digest=state.get_final_digest(),
         final_verified=state.final_verified,
+        format_time=format_time,
         message=state.original_msg.decode('utf-8', errors='replace'),
     )
 

@@ -174,6 +174,12 @@ def test_state_serialization():
     state.hash("serialize")
     state.completed_steps = {0, 1, 2}
     state.final_verified = True
+    state.print_times = {0: 1.0}
+    state.verify_open_times = {0: 2.0}
+    state.verify_submit_times = {0: 3.0}
+    state.final_print_time = 4.0
+    state.final_verify_open_time = 5.0
+    state.final_verify_submit_time = 6.0
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         path = f.name
@@ -184,6 +190,12 @@ def test_state_serialization():
         assert restored.get_final_digest() == state.get_final_digest()
         assert restored.completed_steps == state.completed_steps
         assert restored.final_verified == state.final_verified
+        assert restored.print_times == state.print_times
+        assert restored.verify_open_times == state.verify_open_times
+        assert restored.verify_submit_times == state.verify_submit_times
+        assert restored.final_print_time == state.final_print_time
+        assert restored.final_verify_open_time == state.final_verify_open_time
+        assert restored.final_verify_submit_time == state.final_verify_submit_time
     finally:
         os.unlink(path)
 

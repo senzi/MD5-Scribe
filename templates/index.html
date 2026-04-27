@@ -8,15 +8,48 @@
     <p class="subtitle">一步一步，手算验证 MD5 的 64 轮逻辑运算</p>
 </div>
 
+{% if current_state %}
 <div class="card input-card">
-    <h2>开始新的验证</h2>
+    <h2>继续当前任务</h2>
+    <div class="summary-grid">
+        <div class="summary-item">
+            <div class="summary-label">原始消息</div>
+            <div class="summary-value">{{ current_state.original_msg.decode('utf-8', errors='replace') }}</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-label">完成轮数</div>
+            <div class="summary-value">{{ current_state.completed_steps | length }} / {{ current_state.steps | length }}</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-label">创建时间</div>
+            <div class="summary-value">{{ format_time(current_state.created_at) }}</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-label">最后更新</div>
+            <div class="summary-value">{{ format_time(current_state.updated_at) }}</div>
+        </div>
+    </div>
+    <div class="actions">
+        {% if current_state.final_verified %}
+        <a href="{{ url_for('final_report') }}" class="btn btn-primary">查看报告</a>
+        {% elif current_state.completed_steps | length == current_state.steps | length %}
+        <a href="{{ url_for('final_verify') }}" class="btn btn-primary">继续最终验证</a>
+        {% else %}
+        <a href="{{ url_for('step_control', step_id=next_step) }}" class="btn btn-primary">继续 Step {{ next_step }}</a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<div class="card input-card">
+    <h2>{% if current_state %}开始新任务{% else %}开始新的验证{% endif %}</h2>
     <form action="{{ url_for('init_state') }}" method="POST" class="input-form">
         <div class="form-group">
             <label for="message">输入字符串</label>
             <input type="text" id="message" name="message" placeholder="例如: hello" required autofocus>
-            <small>系统将计算该字符串的 MD5，并引导您逐轮手算验证。</small>
+            <small>系统将计算该字符串的 MD5，并引导您逐轮手算验证。开始新任务会替换当前缓存任务。</small>
         </div>
-        <button type="submit" class="btn btn-primary">初始化并开始</button>
+        <button type="submit" class="btn btn-primary">{% if current_state %}开始新任务{% else %}初始化并开始{% endif %}</button>
     </form>
 </div>
 

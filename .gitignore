@@ -204,6 +204,7 @@ cython_debug/
 tempCodeRunnerFile.py
 
 # MD5-Scribe runtime artifacts
+current_state.json
 session_log.json
 final_report.md
 

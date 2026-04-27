@@ -54,4 +54,4 @@ The printable worksheet is designed for hand calculation. The `f` result, `T1`, 
 
 After all 64 rounds are complete, the final worksheet shows the final `A`, `B`, `C`, and `D` registers and leaves space to reverse each 32-bit word by byte before concatenating the final 128-bit MD5 digest.
 
-Runtime verification artifacts are written locally as `session_log.json` and `final_report.md`; both are ignored by Git.
+Runtime task state and verification artifacts are written locally as `current_state.json`, `session_log.json`, and `final_report.md`; all are ignored by Git.

@@ -8,6 +8,7 @@ storing every atomic intermediate value for human verification.
 import struct
 import math
 import json
+import time
 from typing import List, Tuple, Dict, Any
 
 # MD5 constants K[i] = floor(2^32 * abs(sin(i+1)))
@@ -75,8 +76,16 @@ class MD5State:
         self.steps: List[Dict[str, Any]] = []
         self.completed_steps: set = set()
         self.final_verified: bool = False
+        self.created_at: float = time.time()
+        self.updated_at: float = self.created_at
         self.start_times: Dict[int, float] = {}
         self.end_times: Dict[int, float] = {}
+        self.print_times: Dict[int, float] = {}
+        self.verify_open_times: Dict[int, float] = {}
+        self.verify_submit_times: Dict[int, float] = {}
+        self.final_print_time: float | None = None
+        self.final_verify_open_time: float | None = None
+        self.final_verify_submit_time: float | None = None
 
     @property
     def registers(self) -> Tuple[int, int, int, int]:
@@ -192,8 +201,16 @@ class MD5State:
             "steps": self.steps,
             "completed_steps": list(self.completed_steps),
             "final_verified": self.final_verified,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
             "start_times": self.start_times,
             "end_times": self.end_times,
+            "print_times": self.print_times,
+            "verify_open_times": self.verify_open_times,
+            "verify_submit_times": self.verify_submit_times,
+            "final_print_time": self.final_print_time,
+            "final_verify_open_time": self.final_verify_open_time,
+            "final_verify_submit_time": self.final_verify_submit_time,
         }
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
@@ -211,8 +228,16 @@ class MD5State:
         state.hash(bytes.fromhex(data["original_msg"]))
         state.completed_steps = set(data.get("completed_steps", []))
         state.final_verified = bool(data.get("final_verified", False))
+        state.created_at = float(data.get("created_at", time.time()))
+        state.updated_at = float(data.get("updated_at", state.created_at))
         state.start_times = {int(k): v for k, v in data.get("start_times", {}).items()}
         state.end_times = {int(k): v for k, v in data.get("end_times", {}).items()}
+        state.print_times = {int(k): v for k, v in data.get("print_times", {}).items()}
+        state.verify_open_times = {int(k): v for k, v in data.get("verify_open_times", {}).items()}
+        state.verify_submit_times = {int(k): v for k, v in data.get("verify_submit_times", {}).items()}
+        state.final_print_time = data.get("final_print_time")
+        state.final_verify_open_time = data.get("final_verify_open_time")
+        state.final_verify_submit_time = data.get("final_verify_submit_time")
         return state
 
 

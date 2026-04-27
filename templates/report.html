@@ -67,6 +67,15 @@
             {% else %}
             <span class="tl-duration">进行中/未完成</span>
             {% endif %}
+            {% if item.printed_at %}
+            <span class="tl-duration">工单 {{ format_time(item.printed_at) }}</span>
+            {% endif %}
+            {% if item.verify_opened_at %}
+            <span class="tl-duration">验证页 {{ format_time(item.verify_opened_at) }}</span>
+            {% endif %}
+            {% if item.submitted_at %}
+            <span class="tl-duration">提交 {{ format_time(item.submitted_at) }}</span>
+            {% endif %}
             {% if item.completed %}
             <span class="tl-status">✓</span>
             {% endif %}

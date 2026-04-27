@@ -153,9 +153,24 @@ def test_log_file_initialized():
     client = TestClient()
     client.post_init("log_init")
     assert os.path.exists(app.LOG_PATH)
+    assert os.path.exists(app.STATE_PATH)
     with open(app.LOG_PATH, "r", encoding="utf-8") as f:
         assert json.load(f) == []
     print("OK test_log_file_initialized")
+
+
+def test_current_task_restores_from_disk():
+    client = TestClient()
+    client.post_init("restore_me")
+    app.STATE_STORE.clear()
+    app.session.clear()
+    restored = app.get_state()
+    assert restored is not None
+    assert restored.original_msg == b"restore_me"
+    rv = client.client.get("/")
+    assert rv.status_code == 200
+    assert "继续当前任务".encode() in rv.data
+    print("OK test_current_task_restores_from_disk")
 
 
 def test_final_print_requires_completed_rounds():
@@ -248,6 +263,7 @@ if __name__ == "__main__":
     test_report_page()
     test_markdown_report_route()
     test_log_file_initialized()
+    test_current_task_restores_from_disk()
     test_final_print_requires_completed_rounds()
     test_final_verify_correct_digest()
     test_final_verify_wrong_digest()
