@@ -661,7 +661,15 @@ code {
     font-family: var(--mono);
     font-size: 0.55rem;
     color: var(--muted);
-    word-break: break-all;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.reg-col-bin span {
+    display: block;
 }
 
 .const-grid {
@@ -757,17 +765,11 @@ code {
     display: flex;
     flex-direction: column;
     align-items: center;
-    width: 2rem;
+    width: 1.8rem;
 }
 
-.carry-tick {
-    font-size: 0.5rem;
-    color: var(--muted);
-    height: 0.7rem;
-    line-height: 0.7rem;
-}
-
-.hex-char {
+.hex-char,
+.hex-char-disp {
     width: 1.8rem;
     height: 1.8rem;
     border: 1px solid var(--border);
@@ -780,15 +782,7 @@ code {
 }
 
 .hex-char-disp {
-    width: 1.8rem;
-    height: 1.8rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--mono);
-    font-size: 0.9rem;
     background: #fafafa;
-    border: 1px solid transparent;
 }
 
 /* Addition layout */
@@ -816,7 +810,7 @@ code {
     border-top: 1px solid var(--text);
     margin: 0.25rem 0;
     margin-left: 2.75rem;
-    width: calc(8 * 2.05rem + 7 * 0.25rem);
+    width: calc(8 * 1.8rem + 7 * 0.25rem);
 }
 
 .add-row.result .add-label {

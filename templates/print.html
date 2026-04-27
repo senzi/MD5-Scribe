@@ -47,7 +47,11 @@
             <div class="reg-col">
                 <div class="reg-col-name">{{ name }}</div>
                 <div class="reg-col-hex">{{ hex32(reg) }}</div>
-                <div class="reg-col-bin">{{ bin32(reg) }}</div>
+                {% set reg_bits = bin32(reg) %}
+                <div class="reg-col-bin">
+                    <span>{{ reg_bits[:16] }}</span>
+                    <span>{{ reg_bits[16:] }}</span>
+                </div>
             </div>
             {% endfor %}
         </div>
@@ -93,8 +97,8 @@
             </tr>
             <tr class="result-row">
                 <td class="reg-label">f</td>
-                {% for bit in bin32(step_data.f_val) %}
-                <td class="bit-cell result">{{ bit }}</td>
+                {% for _ in range(32) %}
+                <td class="bit-cell result"></td>
                 {% endfor %}
             </tr>
         </table>
@@ -103,7 +107,6 @@
                 <span>f (Hex):</span>
                 {% for _ in range(8) %}
                 <div class="hex-box">
-                    <div class="carry-tick">☐</div>
                     <div class="hex-char"></div>
                 </div>
                 {% endfor %}
@@ -123,8 +126,10 @@
             </div>
             <div class="add-row">
                 <span class="add-label">+ f</span>
-                {% for ch in hex32(step_data.f_val) %}
-                <div class="hex-char-disp">{{ ch }}</div>
+                {% for _ in range(8) %}
+                <div class="hex-box">
+                    <div class="hex-char"></div>
+                </div>
                 {% endfor %}
             </div>
             <div class="add-divider"></div>
@@ -132,7 +137,6 @@
                 <span class="add-label">T1</span>
                 {% for _ in range(8) %}
                 <div class="hex-box">
-                    <div class="carry-tick">☐</div>
                     <div class="hex-char"></div>
                 </div>
                 {% endfor %}
@@ -140,20 +144,42 @@
         </div>
     </div>
 
-    <!-- Step 03: T1 + M_j + K_i -->
+    <!-- Step 03: T2 = T1 + M_j -->
     <div class="worksheet-block">
-        <div class="ws-title">步骤 03 — 常量注入 T3 = T1 + M_j + K_i</div>
+        <div class="ws-title">步骤 03 — 消息字累加 T2 = T1 + M_j</div>
         <div class="addition-layout">
             <div class="add-row">
                 <span class="add-label">T1</span>
                 {% for _ in range(8) %}
-                <div class="hex-box"><div class="carry-tick">☐</div><div class="hex-char"></div></div>
+                <div class="hex-box"><div class="hex-char"></div></div>
                 {% endfor %}
             </div>
             <div class="add-row">
                 <span class="add-label">+ M_j</span>
                 {% for ch in hex32(step_data.mj) %}
                 <div class="hex-char-disp">{{ ch }}</div>
+                {% endfor %}
+            </div>
+            <div class="add-divider"></div>
+            <div class="add-row result">
+                <span class="add-label">T2</span>
+                {% for _ in range(8) %}
+                <div class="hex-box">
+                    <div class="hex-char"></div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 04: T3 = T2 + K_i -->
+    <div class="worksheet-block">
+        <div class="ws-title">步骤 04 — 常量累加 T3 = T2 + K_i</div>
+        <div class="addition-layout">
+            <div class="add-row">
+                <span class="add-label">T2</span>
+                {% for _ in range(8) %}
+                <div class="hex-box"><div class="hex-char"></div></div>
                 {% endfor %}
             </div>
             <div class="add-row">
@@ -167,7 +193,6 @@
                 <span class="add-label">T3</span>
                 {% for _ in range(8) %}
                 <div class="hex-box">
-                    <div class="carry-tick">☐</div>
                     <div class="hex-char"></div>
                 </div>
                 {% endfor %}
@@ -175,9 +200,9 @@
         </div>
     </div>
 
-    <!-- Step 04: Rotate Left -->
+    <!-- Step 05: Rotate Left -->
     <div class="worksheet-block">
-        <div class="ws-title">步骤 04 — 循环左移 ROT = RotateLeft(T3, {{ step_data.s }})</div>
+        <div class="ws-title">步骤 05 — 循环左移 ROT = RotateLeft(T3, {{ step_data.s }})</div>
         <div class="rotate-instruction">
             将 T3 的 32 位二进制向左循环移动 <strong>{{ step_data.s }}</strong> 位。
             在下方格子中重新排列各位。
@@ -185,7 +210,7 @@
         <div class="bit-grid-32">
             {% for i in range(32) %}
             <div class="bit-slot">
-                <div class="bit-pos">{{ i }}</div>
+                <div class="bit-pos">{{ 31 - i }}</div>
                 <div class="bit-value"></div>
             </div>
             {% endfor %}
@@ -194,21 +219,20 @@
             <span>ROT (Hex):</span>
             {% for _ in range(8) %}
             <div class="hex-box">
-                <div class="carry-tick">☐</div>
                 <div class="hex-char"></div>
             </div>
             {% endfor %}
         </div>
     </div>
 
-    <!-- Step 05: B_new = ROT + B -->
+    <!-- Step 06: B_new = ROT + B -->
     <div class="worksheet-block">
-        <div class="ws-title">步骤 05 — 最终结果 B_new = ROT + B</div>
+        <div class="ws-title">步骤 06 — 最终结果 B_new = ROT + B</div>
         <div class="addition-layout">
             <div class="add-row">
                 <span class="add-label">ROT</span>
                 {% for _ in range(8) %}
-                <div class="hex-box"><div class="carry-tick">☐</div><div class="hex-char"></div></div>
+                <div class="hex-box"><div class="hex-char"></div></div>
                 {% endfor %}
             </div>
             <div class="add-row">
@@ -222,7 +246,6 @@
                 <span class="add-label">B_new</span>
                 {% for _ in range(8) %}
                 <div class="hex-box">
-                    <div class="carry-tick">☐</div>
                     <div class="hex-char"></div>
                 </div>
                 {% endfor %}
@@ -231,6 +254,7 @@
     </div>
 </div>
 
+{% if step_id == 0 %}
 <!-- Page 2: Reference -->
 <div class="print-page">
     <div class="print-header">
@@ -254,4 +278,5 @@
         </div>
     </div>
 </div>
+{% endif %}
 {% endblock %}
