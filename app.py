@@ -399,27 +399,21 @@ def step_verify(step_id: int):
         # Parse submitted atom answers
         answers = []
         errors = []
+        raw_answers = []
         for i in range(5):
             field_name = f"atom_{i}"
-            raw = request.form.get(field_name, "").strip()
+            raw = request.form.get(field_name, "").strip().upper()
+            raw_answers.append(raw)
             if not raw:
                 errors.append(f"原子运算 {i+1} 未填写。")
                 answers.append(0)
                 continue
-            try:
-                # Accept hex (with or without 0x) or decimal
-                if raw.lower().startswith("0x"):
-                    val = int(raw, 16)
-                else:
-                    # Try hex first if length is 8 and only hex chars
-                    if len(raw) <= 8 and all(c in "0123456789abcdefABCDEF" for c in raw):
-                        val = int(raw, 16)
-                    else:
-                        val = int(raw)
-                answers.append(val & 0xFFFFFFFF)
-            except ValueError:
-                errors.append(f"原子运算 {i+1} 格式无效: '{raw}'")
+            if len(raw) != 8 or any(c not in "0123456789ABCDEF" for c in raw):
+                errors.append(f"原子运算 {i+1} 需要填写 8 位十六进制符号。")
                 answers.append(0)
+                continue
+            val = int(raw, 16)
+            answers.append(val & 0xFFFFFFFF)
 
         if errors:
             for e in errors:
@@ -433,6 +427,7 @@ def step_verify(step_id: int):
                 hex32=hex32,
                 bin32=bin32,
                 answers=answers,
+                raw_answers=raw_answers,
                 verification=None,
                 message=state.original_msg.decode('utf-8', errors='replace'),
             )
@@ -495,6 +490,7 @@ def step_verify(step_id: int):
             hex32=hex32,
             bin32=bin32,
             answers=answers,
+            raw_answers=[hex32(a) for a in answers],
             verification=verification,
             message=state.original_msg.decode('utf-8', errors='replace'),
         )
@@ -515,6 +511,7 @@ def step_verify(step_id: int):
         hex32=hex32,
         bin32=bin32,
         answers=[],
+        raw_answers=[],
         verification=None,
         message=state.original_msg.decode('utf-8', errors='replace'),
     )

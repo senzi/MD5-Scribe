@@ -203,11 +203,21 @@
     <!-- Step 05: Rotate Left -->
     <div class="worksheet-block">
         <div class="ws-title">步骤 05 — 循环左移 ROT = RotateLeft(T3, {{ step_data.s }})</div>
+        <div class="bit-grid-label">T3 (Binary):</div>
+        <div class="bit-grid-32 bit-grid-spacious">
+            {% for i in range(32) %}
+            <div class="bit-slot">
+                <div class="bit-pos">{{ 31 - i }}</div>
+                <div class="bit-value"></div>
+            </div>
+            {% endfor %}
+        </div>
         <div class="rotate-instruction">
             将 T3 的 32 位二进制向左循环移动 <strong>{{ step_data.s }}</strong> 位。
             在下方格子中重新排列各位。
         </div>
-        <div class="bit-grid-32">
+        <div class="bit-grid-label">ROT (Binary):</div>
+        <div class="bit-grid-32 bit-grid-spacious">
             {% for i in range(32) %}
             <div class="bit-slot">
                 <div class="bit-pos">{{ 31 - i }}</div>

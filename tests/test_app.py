@@ -220,26 +220,28 @@ def test_api_state():
     print("OK test_api_state")
 
 
-def test_verify_hex_prefix():
+def test_verify_rejects_hex_prefix():
     client = TestClient()
     client.post_init("hex_prefix")
     state = app.get_state()
     correct = [f"0x{v:08X}" for v in state.steps[0]["correct_atoms"]]
     rv = client.post_verify(0, correct)
     assert rv.status_code == 200
-    assert "正确".encode() in rv.data or b"Step 1" in rv.data
-    print("OK test_verify_hex_prefix")
+    assert "需要填写 8 位十六进制符号".encode() in rv.data
+    assert 0 not in state.completed_steps
+    print("OK test_verify_rejects_hex_prefix")
 
 
-def test_verify_decimal_input():
+def test_verify_rejects_decimal_input():
     client = TestClient()
     client.post_init("decimal")
     state = app.get_state()
     correct = [str(v) for v in state.steps[0]["correct_atoms"]]
     rv = client.post_verify(0, correct)
     assert rv.status_code == 200
-    assert "正确".encode() in rv.data or b"Step 1" in rv.data
-    print("OK test_verify_decimal_input")
+    assert "需要填写 8 位十六进制符号".encode() in rv.data
+    assert 0 not in state.completed_steps
+    print("OK test_verify_rejects_decimal_input")
 
 
 def test_session_isolation():
@@ -268,7 +270,7 @@ if __name__ == "__main__":
     test_final_verify_correct_digest()
     test_final_verify_wrong_digest()
     test_api_state()
-    test_verify_hex_prefix()
-    test_verify_decimal_input()
+    test_verify_rejects_hex_prefix()
+    test_verify_rejects_decimal_input()
     test_session_isolation()
     print("\n=== All app integration tests passed! ===")

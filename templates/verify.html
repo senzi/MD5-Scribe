@@ -95,8 +95,15 @@
                 name="atom_{{ i }}"
                 class="mono input-hex"
                 placeholder="8位十六进制，例如 1A2B3C4D"
-                value="{% if answers %}{{ hex32(answers[i]) if answers[i] else '' }}{% endif %}"
-                maxlength="10"
+                value="{% if raw_answers and raw_answers|length > i %}{{ raw_answers[i] }}{% elif answers and answers|length > i %}{{ hex32(answers[i]) }}{% endif %}"
+                maxlength="8"
+                minlength="8"
+                pattern="[0-9A-Fa-f]{8}"
+                inputmode="text"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                data-hex-input
             >
             <small>请输入 32 位结果的 8 位十六进制表示</small>
         </div>
@@ -108,6 +115,20 @@
     </form>
 </div>
 
+<div class="hex-keypad" aria-label="十六进制输入键盘">
+    <div class="hex-keypad-title">HEX</div>
+    <div class="hex-keypad-grid">
+        {% for key in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'] %}
+        <button type="button" class="hex-key" data-hex-key="{{ key }}">{{ key }}</button>
+        {% endfor %}
+    </div>
+    <div class="hex-keypad-actions">
+        <button type="button" class="hex-key hex-key-wide" data-hex-action="backspace" aria-label="删除">←</button>
+        <button type="button" class="hex-key hex-key-wide" data-hex-action="clear">清空</button>
+        <button type="button" class="hex-key hex-key-wide" data-hex-action="next">下个</button>
+    </div>
+</div>
+
 <div class="step-nav">
     {% if step_id > 0 %}
     <a href="{{ url_for('step_control', step_id=step_id - 1) }}" class="btn btn-small">← 上一步</a>
@@ -117,4 +138,72 @@
     <a href="{{ url_for('step_control', step_id=step_id + 1) }}" class="btn btn-small">下一步 →</a>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    const inputs = Array.from(document.querySelectorAll("[data-hex-input]"));
+    const keypad = document.querySelector(".hex-keypad");
+    let activeInput = inputs[0] || null;
+
+    const sanitizeHex = (value) => value.toUpperCase().replace(/[^0-9A-F]/g, "").slice(0, 8);
+
+    const setActiveInput = (input) => {
+        if (!input) return;
+        activeInput = input;
+        inputs.forEach((item) => item.classList.toggle("input-active", item === activeInput));
+    };
+
+    const updateInputValue = (input, value) => {
+        input.value = sanitizeHex(value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+
+    inputs.forEach((input, index) => {
+        input.addEventListener("focus", () => setActiveInput(input));
+        input.addEventListener("input", () => {
+            const previous = input.value;
+            const next = sanitizeHex(previous);
+            if (previous !== next) {
+                input.value = next;
+            }
+            if (input.value.length === 8 && inputs[index + 1]) {
+                setActiveInput(inputs[index + 1]);
+                inputs[index + 1].focus();
+            }
+        });
+        input.addEventListener("paste", (event) => {
+            event.preventDefault();
+            updateInputValue(input, input.value + (event.clipboardData || window.clipboardData).getData("text"));
+        });
+    });
+
+    if (activeInput) {
+        setActiveInput(activeInput);
+    }
+
+    keypad?.addEventListener("click", (event) => {
+        const button = event.target.closest("button");
+        if (!button || !activeInput) return;
+        const key = button.dataset.hexKey;
+        const action = button.dataset.hexAction;
+
+        activeInput.focus();
+        if (key && activeInput.value.length < 8) {
+            updateInputValue(activeInput, activeInput.value + key);
+            return;
+        }
+        if (action === "backspace") {
+            updateInputValue(activeInput, activeInput.value.slice(0, -1));
+        } else if (action === "clear") {
+            updateInputValue(activeInput, "");
+        } else if (action === "next") {
+            const currentIndex = inputs.indexOf(activeInput);
+            setActiveInput(inputs[(currentIndex + 1) % inputs.length]);
+            activeInput.focus();
+        }
+    });
+})();
+</script>
 {% endblock %}
