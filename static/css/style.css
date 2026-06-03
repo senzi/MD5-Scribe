@@ -198,7 +198,57 @@ body {
     box-shadow: 0 0 0 3px var(--accent-light);
 }
 
+.form-group input[type="text"].input-error {
+    border-color: var(--error);
+    box-shadow: 0 0 0 3px var(--error-bg);
+}
+
 .form-group small {
+    color: var(--muted);
+    font-size: 0.8rem;
+}
+
+.message-meter {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-top: 0.2rem;
+}
+
+.message-meter-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    color: var(--muted);
+    font-size: 0.8rem;
+}
+
+.message-meter-track {
+    height: 0.55rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #eef2f7;
+    border: 1px solid var(--border);
+}
+
+.message-meter-fill {
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+    transition: width 0.2s ease, background 0.2s ease;
+}
+
+.message-meter-fill.is-rich {
+    background: var(--success);
+}
+
+.message-meter-fill.is-over {
+    background: var(--error);
+}
+
+.message-meter-hint {
+    min-height: 1.1rem;
     color: var(--muted);
     font-size: 0.8rem;
 }

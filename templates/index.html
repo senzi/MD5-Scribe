@@ -46,17 +46,27 @@
     <form action="{{ url_for('init_state') }}" method="POST" class="input-form">
         <div class="form-group">
             <label for="message">输入字符串</label>
-            <input type="text" id="message" name="message" placeholder="例如: hello" required autofocus>
-            <small>系统将计算该字符串的 MD5，并引导您逐轮手算验证。开始新任务会替换当前缓存任务。</small>
+            <input type="text" id="message" name="message" placeholder="例如: hello" required autofocus data-max-bytes="{{ max_message_bytes }}">
+            <div class="message-meter" aria-live="polite">
+                <div class="message-meter-meta">
+                    <span>单块容量</span>
+                    <span><strong id="message-byte-count">0</strong> / {{ max_message_bytes }} bytes</span>
+                </div>
+                <div class="message-meter-track">
+                    <div class="message-meter-fill" id="message-meter-fill"></div>
+                </div>
+                <div class="message-meter-hint" id="message-meter-hint">建议尽量接近 {{ max_message_bytes }} bytes，这样消息字中 0 值更少，手算练习更完整。</div>
+            </div>
+            <small>当前只允许单个 MD5 消息块，原始消息最多 {{ max_message_bytes }} bytes。开始新任务会替换当前缓存任务。</small>
         </div>
-        <button type="submit" class="btn btn-primary">{% if current_state %}开始新任务{% else %}初始化并开始{% endif %}</button>
+        <button type="submit" class="btn btn-primary" id="init-submit">{% if current_state %}开始新任务{% else %}初始化并开始{% endif %}</button>
     </form>
 </div>
 
 <div class="info-grid">
     <div class="info-card">
         <h3>1. 初始化</h3>
-        <p>输入任意字符串，后端自动完成消息填充（Padding）并进入 Step 0。</p>
+        <p>输入不超过 55 bytes 的字符串，后端自动完成单块消息填充（Padding）并进入 Step 0。</p>
     </div>
     <div class="info-card">
         <h3>2. 打印工单</h3>
@@ -71,4 +81,45 @@
         <p>完成 64 轮和最终摘要拼接验证后，查看网页报告并生成 Markdown 归档。</p>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    const input = document.querySelector("#message");
+    const count = document.querySelector("#message-byte-count");
+    const fill = document.querySelector("#message-meter-fill");
+    const hint = document.querySelector("#message-meter-hint");
+    const submit = document.querySelector("#init-submit");
+    if (!input || !count || !fill || !hint || !submit) return;
+
+    const maxBytes = Number(input.dataset.maxBytes || 55);
+    const encoder = new TextEncoder();
+
+    const updateMeter = () => {
+        const byteLength = encoder.encode(input.value).length;
+        const percent = Math.min((byteLength / maxBytes) * 100, 100);
+        const isOver = byteLength > maxBytes;
+        const isRich = byteLength >= Math.ceil(maxBytes * 0.8) && !isOver;
+
+        count.textContent = String(byteLength);
+        fill.style.width = `${percent}%`;
+        fill.classList.toggle("is-over", isOver);
+        fill.classList.toggle("is-rich", isRich);
+        input.classList.toggle("input-error", isOver);
+        submit.disabled = isOver;
+
+        if (isOver) {
+            hint.textContent = `已超过单块上限 ${byteLength - maxBytes} bytes。当前训练模式只允许 64 轮，请缩短消息。`;
+        } else if (isRich) {
+            hint.textContent = "长度很适合练习：消息块更饱满，T2 遇到 +0 的机会更少。";
+        } else {
+            hint.textContent = `建议尽量接近 ${maxBytes} bytes，这样消息字中 0 值更少，手算练习更完整。`;
+        }
+    };
+
+    input.addEventListener("input", updateMeter);
+    updateMeter();
+})();
+</script>
 {% endblock %}

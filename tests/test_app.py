@@ -220,6 +220,27 @@ def test_api_state():
     print("OK test_api_state")
 
 
+def test_init_allows_single_block_limit():
+    client = TestClient()
+    rv = client.post_init("a" * app.MAX_SINGLE_BLOCK_MESSAGE_BYTES)
+    assert rv.status_code == 200
+    state = app.get_state()
+    assert state.original_msg == b"a" * app.MAX_SINGLE_BLOCK_MESSAGE_BYTES
+    assert len(state.steps) == 64
+    print("OK test_init_allows_single_block_limit")
+
+
+def test_init_rejects_multi_block_message():
+    client = TestClient()
+    client.post_init("safe")
+    state_before = app.get_state()
+    rv = client.post_init("a" * (app.MAX_SINGLE_BLOCK_MESSAGE_BYTES + 1))
+    assert rv.status_code == 200
+    assert "只支持单个 MD5 消息块".encode() in rv.data
+    assert app.get_state().original_msg == state_before.original_msg
+    print("OK test_init_rejects_multi_block_message")
+
+
 def test_verify_rejects_hex_prefix():
     client = TestClient()
     client.post_init("hex_prefix")
@@ -270,6 +291,8 @@ if __name__ == "__main__":
     test_final_verify_correct_digest()
     test_final_verify_wrong_digest()
     test_api_state()
+    test_init_allows_single_block_limit()
+    test_init_rejects_multi_block_message()
     test_verify_rejects_hex_prefix()
     test_verify_rejects_decimal_input()
     test_session_isolation()

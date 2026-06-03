@@ -32,6 +32,7 @@ app.jinja_env.globals["zip"] = zip
 # In-memory store for active sessions (in production, use Redis or DB)
 STATE_STORE: dict = {}
 CURRENT_STATE_ID = "current"
+MAX_SINGLE_BLOCK_MESSAGE_BYTES = 55
 STATE_PATH = "current_state.json"
 LOG_PATH = "session_log.json"
 REPORT_PATH = "final_report.md"
@@ -297,6 +298,7 @@ def index():
         "index.html",
         current_state=state,
         next_step=next_step,
+        max_message_bytes=MAX_SINGLE_BLOCK_MESSAGE_BYTES,
         format_time=format_time,
     )
 
@@ -306,6 +308,13 @@ def init_state():
     msg = request.form.get("message", "")
     if not msg:
         flash("请输入一个非空字符串。", "error")
+        return redirect(url_for("index"))
+    msg_bytes = msg.encode("utf-8")
+    if len(msg_bytes) > MAX_SINGLE_BLOCK_MESSAGE_BYTES:
+        flash(
+            f"当前训练模式只支持单个 MD5 消息块：原始消息最多 {MAX_SINGLE_BLOCK_MESSAGE_BYTES} bytes，当前为 {len(msg_bytes)} bytes。",
+            "error",
+        )
         return redirect(url_for("index"))
 
     state = MD5State()
