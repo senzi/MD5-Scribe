@@ -825,6 +825,10 @@ code {
     gap: 0.25rem;
 }
 
+.f-hex-grid {
+    margin-top: 0.85rem;
+}
+
 .hex-row {
     display: flex;
     align-items: center;
