@@ -1,61 +1,54 @@
 # MD5-Scribe
 
-A human-AI collaborative system for learning and checking manual MD5 computation with printable worksheets and digital verification.
+MD5-Scribe is a local-first learning and verification tool for manual MD5 computation. The algorithm, progress, and error log all run in the browser, with no Python runtime, database, or backend service.
 
 ## Features
 
-- Generates the 64 MD5 round steps for a single-block input message.
-- Limits new messages to 55 UTF-8 bytes, with a live single-block capacity meter that encourages fuller practice inputs.
-- Provides a printable worksheet for each round.
-- Keeps intermediate values hidden where the learner should compute them by hand.
-- Verifies the five atom results for each round:
-  - `T1 = A + f`
-  - `T2 = T1 + M_j`
-  - `T3 = T2 + K_i`
-  - `ROT = RotateLeft(T3, s)`
-  - `B_new = ROT + B`
-- Keeps round verification input constrained to 8 uppercase hexadecimal characters, with a floating on-page hex keypad for quick entry.
-- Adds a final worksheet and verification step for little-endian A/B/C/D byte ordering and digest concatenation.
-- Includes the hex/binary reference appendix only on the first printable worksheet.
+- Implements instrumented MD5 entirely in the browser.
+- Limits input to 55 UTF-8 bytes so each exercise remains one block and 64 rounds.
+- Provides a round console, printable worksheet, and validation of five intermediate values.
+- Stores multiple independent challenges in `localStorage`, with task creation, switching, and deletion.
+- Verifies final A/B/C/D little-endian byte ordering and digest concatenation.
+- Builds a local error analysis, timeline, and audit log with Markdown download.
+- Does not upload messages or progress while the app is running.
 
-## Setup
+## Development
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+npm install
+npm run dev
 ```
 
-## Run
+Open the Vite URL printed in the terminal, normally `http://localhost:5173`.
+
+Do not serve the repository-root `index.html` with a plain static server; it is the Vite development entry. To check the production build, run:
 
 ```bash
-python app.py
+npm run build
+npm start
 ```
 
-Then open:
-
-```text
-http://localhost:5000
-```
-
-## Test
+## Test and Build
 
 ```bash
-python -m pytest
+npm test
+npm run build
 ```
 
-The core MD5 logic tests can also be run directly:
+Production assets are emitted to `dist/`. The relative Vite base allows deployment on any static host. The production build registers a service worker so the app can reopen offline after its first successful load.
 
-```bash
-python tests/test_md5_logic.py
-```
+## Local Data
 
-## Worksheet Notes
+The task workspace is stored under `md5-scribe:workspace:v3` in browser `localStorage`. Legacy single-task data is migrated into the first challenge automatically. Markdown reports are generated as browser downloads and are never uploaded.
 
-The printable worksheet is designed for hand calculation. New tasks are limited to one MD5 message block, so the learner always works through exactly 64 rounds. Because MD5 padding needs one `0x80` byte and an 8-byte length field, the original message can use at most 55 UTF-8 bytes. The home page shows a byte-based capacity meter and recommends staying close to 55 bytes so the message words contain fewer zero values.
+## Worksheet Flow
 
-The `f` result, `T1`, `T2`, `T3`, `ROT`, and `B_new` fields are left blank where the learner is expected to fill them in. Step 05 includes separate 32-bit grids for converting `T3` to binary and for rearranging the rotated `ROT` bits. Rotation bit grids are shown from bit 31 on the left to bit 0 on the right so that binary-to-hex grouping stays natural.
+Each round verifies five atomic results:
 
-After all 64 rounds are complete, the final worksheet shows the final `A`, `B`, `C`, and `D` registers and leaves space to reverse each 32-bit word by byte before concatenating the final 128-bit MD5 digest.
+1. `T1 = A + f`
+2. `T2 = T1 + M_j`
+3. `T3 = T2 + K_i`
+4. `ROT = RotateLeft(T3, s)`
+5. `B_new = ROT + B`
 
-Runtime task state and verification artifacts are written locally as `current_state.json`, `session_log.json`, and `final_report.md`; all are ignored by Git.
+Worksheet buttons use the native print dialog, which can print directly or save as PDF. The first round includes a hexadecimal-to-binary reference table.

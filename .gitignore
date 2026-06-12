@@ -208,6 +208,10 @@ current_state.json
 session_log.json
 final_report.md
 
+# Frontend dependencies and build output
+node_modules/
+dist/
+
 # Ruff stuff:
 .ruff_cache/
 

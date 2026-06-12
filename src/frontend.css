@@ -1,0 +1,98 @@
+.brand-button,
+.nav-links button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.brand-button {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+}
+
+.nav-links button {
+  padding: .35rem .55rem;
+  border-radius: 5px;
+}
+
+.nav-links button:hover { background: var(--accent-light); color: var(--accent); }
+.local-badge { display: inline-block; padding: .3rem .7rem; margin-bottom: .8rem; border: 1px solid #a7f3d0; border-radius: 99px; background: #ecfdf5; color: #047857; font-size: .78rem; font-weight: 700; }
+.wrap-anywhere { overflow-wrap: anywhere; }
+.result-next { margin-top: 1rem; }
+.verification-result { scroll-margin-top: 5.5rem; }
+.verification-result:focus { outline: none; }
+.atom-group { gap: .45rem; }
+.atom-group .input-hex {
+  width: 100%;
+  min-height: 3.5rem;
+  padding: .8rem 1rem;
+  border-width: 2px;
+  border-radius: 8px;
+  font-size: 1.35rem;
+  line-height: 1.2;
+  letter-spacing: .18em;
+}
+.atom-group .input-hex::placeholder {
+  color: #9ca3af;
+  font-size: 1rem;
+  letter-spacing: .06em;
+}
+.atom-group small { margin-top: .05rem; }
+.digest-input { letter-spacing: .12em !important; font-size: 1.15rem !important; }
+.print-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .4rem; }
+.print-section-heading h3 { margin-bottom: 0; }
+.print-section-heading span { color: var(--muted); font-size: .72rem; white-space: nowrap; }
+.message-display-grid { display: flex; flex-direction: column; gap: .4rem; }
+.message-display-row { display: grid; grid-template-columns: 5.25rem minmax(0, 1fr); border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+.message-kind { display: flex; align-items: center; padding: .45rem .55rem; background: #f3f4f6; color: #4b5563; border-right: 1px solid var(--border); font-size: .7rem; font-weight: 700; }
+.message-text { min-width: 0; padding: .45rem .65rem; background: #fff; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .84rem; line-height: 1.45; }
+.message-quote { color: var(--accent); font-weight: 700; }
+.message-hex { min-width: 0; padding: .45rem .65rem; background: #f8fafc; color: #475569; overflow-wrap: anywhere; word-spacing: .16rem; font-size: .7rem; line-height: 1.55; }
+.bit-table .result-row td { height: 1.45rem; }
+.print-page { min-height: 297mm; background: #fff; border: 1px solid #ddd; box-shadow: 0 2px 8px rgba(0, 0, 0, .1); }
+.continuation-header { margin-bottom: 1.25rem; }
+.reference-page { min-height: 267mm; }
+.task-list-card { max-width: 760px; margin-left: auto; margin-right: auto; }
+.section-heading p { margin-top: -.65rem; color: var(--muted); font-size: .88rem; }
+.task-list { display: flex; flex-direction: column; gap: .65rem; }
+.task-row { display: flex; align-items: center; gap: .75rem; padding: .6rem; border: 1px solid var(--border); border-radius: 8px; background: #fafafa; }
+.task-row.is-active { border-color: var(--accent); background: var(--accent-light); }
+.task-select { min-width: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 1rem; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.task-message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.task-progress, .task-updated { color: var(--muted); font-size: .8rem; white-space: nowrap; }
+.compact-actions { margin-bottom: 0; }
+
+@media (max-width: 700px) {
+  .tagline { display: none; }
+  .container { padding: 1rem; }
+  .compare-bin { display: none; }
+  .task-select { grid-template-columns: 1fr auto; }
+  .task-updated { display: none; }
+  .atom-group .input-hex { min-height: 3.25rem; font-size: 1.2rem; }
+  .message-display-row { grid-template-columns: 4.5rem minmax(0, 1fr); }
+}
+
+@media print {
+  body { background: #fff; color: #000; }
+  .no-print { display: none !important; }
+  .print-container { max-width: none; padding: 0; }
+  .print-page {
+    min-height: 277mm;
+    margin: 0 auto;
+    padding: 0;
+    border: 0;
+    box-shadow: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    break-after: page;
+    page-break-after: always;
+  }
+  .print-page:last-of-type { break-after: auto; page-break-after: auto; }
+  .worksheet-block { break-inside: avoid; }
+  @page { size: A4; margin: 10mm; }
+}
