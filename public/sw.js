@@ -1,5 +1,5 @@
-const CACHE_NAME = 'md5-scribe-v5'
-const APP_SHELL = ['./', './index.html', './assets/app.js', './assets/app.css']
+const CACHE_NAME = 'md5-scribe-v6'
+const APP_SHELL = ['./index.html', './favicon.svg']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)))
