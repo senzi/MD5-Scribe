@@ -1,606 +1,637 @@
 <script setup>
-import { computed, nextTick, reactive, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { bin32, computeMd5, diffBits, hex32 } from './md5.js'
-import { loadWorkspace, saveWorkspace } from './storage.js'
+import { loadWorkspace, parseWorkspaceJSON, saveWorkspace, serializeWorkspace } from './storage.js'
 
 const MAX_BYTES = 55
+const STAGES = [
+  { short: 'f', label: '逻辑函数' },
+  { short: 'T1', label: 'A + f' },
+  { short: 'T2', label: 'T1 + Mⱼ' },
+  { short: 'T3', label: 'T2 + Kᵢ' },
+  { short: 'ROT', label: '循环左移' },
+  { short: 'B′', label: 'ROT + B' },
+]
 const encoder = new TextEncoder()
+
+function createId() {
+  return globalThis.crypto?.randomUUID?.() || `task-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function prepareTask(raw) {
+  const task = {
+    id: raw.id || createId(),
+    message: raw.message || '',
+    stageProgress: raw.stageProgress && typeof raw.stageProgress === 'object' ? raw.stageProgress : {},
+    completedSteps: Array.isArray(raw.completedSteps) ? raw.completedSteps : [],
+    logs: Array.isArray(raw.logs) ? raw.logs : [],
+    createdAt: raw.createdAt || Date.now(),
+    updatedAt: raw.updatedAt || Date.now(),
+    currentRound: Number.isInteger(raw.currentRound) ? raw.currentRound : 0,
+    currentStage: Number.isInteger(raw.currentStage) ? raw.currentStage : 0,
+    finalVerified: Boolean(raw.finalVerified),
+    finalStatus: raw.finalStatus || 'idle',
+    finalAttempts: Number(raw.finalAttempts) || 0,
+    ...raw,
+  }
+
+  // A completed round from the older version becomes six completed game cells.
+  for (const round of task.completedSteps) {
+    for (let stage = 0; stage < STAGES.length; stage += 1) {
+      task.stageProgress[`${round}:${stage}`] ||= { attempts: 1, passed: true, hadError: false }
+    }
+  }
+  return task
+}
+
 const saved = loadWorkspace()
-const initialParams = new URLSearchParams(globalThis.location.search)
-const initialPrintMode = initialParams.get('print')
-const initialTaskId = initialParams.get('task')
-const initialStep = Number.parseInt(initialParams.get('step') || '0', 10)
-const tasks = ref(saved.tasks)
-const activeTaskId = ref(tasks.value.some((item) => item.id === initialTaskId) ? initialTaskId : saved.activeTaskId)
-const task = ref(tasks.value.find((item) => item.id === activeTaskId.value) || null)
-const result = computed(() => task.value ? computeMd5(task.value.message) : null)
-const page = ref(initialPrintMode === 'final' ? 'final-print' : initialPrintMode === 'step' ? 'print' : 'home')
-const stepId = ref(Number.isInteger(initialStep) && initialStep >= 0 && initialStep < 64 ? initialStep : 0)
+const tasks = ref(saved.tasks.map(prepareTask))
+const activeTaskId = ref(saved.activeTaskId || tasks.value[0]?.id || null)
+const view = ref('lobby')
+const roundIndex = ref(0)
+const stageIndex = ref(0)
 const messageInput = ref('')
 const notice = ref('')
-const answers = reactive(['', '', '', '', ''])
-const verification = ref(null)
-const digestAnswer = ref('')
-const digestVerification = ref(null)
-const activeInput = ref(0)
-const verificationResult = ref(null)
-const digestVerificationResult = ref(null)
+const progressOpen = ref(false)
+const answer = ref('')
+const feedback = ref(null)
+const answerInput = ref(null)
+const importInput = ref(null)
+const scratchButtons = ref([])
+const rotationBitInputs = ref([])
+const finalMode = ref(false)
+const activeEntry = ref({ type: 'answer', index: null })
 
+const carryMarks = ref(Array(8).fill(''))
+const addScratch = ref(Array(8).fill(''))
+const logicScratch = ref(Array(32).fill(''))
+const rotationBits = ref(Array(32).fill(''))
+const rotationPointer = ref(null)
+const activeRotationBit = ref(0)
+const additionScratchLinked = ref(false)
+
+const activeTask = computed(() => tasks.value.find((item) => item.id === activeTaskId.value) || null)
+const result = computed(() => activeTask.value ? computeMd5(activeTask.value.message) : null)
+const currentRound = computed(() => result.value?.steps[roundIndex.value] || null)
 const messageBytes = computed(() => encoder.encode(messageInput.value).length)
-const completed = computed(() => new Set(task.value?.completedSteps || []))
-const allCompleted = computed(() => result.value && completed.value.size === result.value.steps.length)
-const currentStep = computed(() => result.value?.steps[stepId.value])
-const nextStep = computed(() => {
-  if (!result.value) return 0
-  return result.value.steps.findIndex((_, index) => !completed.value.has(index)) < 0
-    ? result.value.steps.length - 1
-    : result.value.steps.findIndex((_, index) => !completed.value.has(index))
+
+function keyFor(round, stage) {
+  return `${round}:${stage}`
+}
+
+function entryAt(round, stage) {
+  return activeTask.value?.stageProgress?.[keyFor(round, stage)] || null
+}
+
+function cellStatus(round, stage) {
+  const entry = entryAt(round, stage)
+  if (!entry?.attempts) return 'idle'
+  if (entry.hadError || !entry.passed) return 'error'
+  return 'success'
+}
+
+function isPassed(round, stage) {
+  return Boolean(entryAt(round, stage)?.passed)
+}
+
+function firstIncomplete(task = activeTask.value) {
+  if (!task) return { round: 0, stage: 0 }
+  for (let round = 0; round < 64; round += 1) {
+    for (let stage = 0; stage < STAGES.length; stage += 1) {
+      if (!task.stageProgress?.[keyFor(round, stage)]?.passed) return { round, stage }
+    }
+  }
+  return null
+}
+
+function isSelectable(round, stage) {
+  if (isPassed(round, stage)) return true
+  const next = firstIncomplete()
+  return Boolean(next && next.round === round && next.stage === stage)
+}
+
+const completedCells = computed(() => {
+  if (!activeTask.value) return 0
+  return Object.values(activeTask.value.stageProgress || {}).filter((entry) => entry?.passed).length
 })
-const isUnlocked = computed(() => stepId.value === 0 || completed.value.has(stepId.value - 1))
-const errorCounts = computed(() => {
-  const counts = {}
-  for (const log of task.value?.logs || []) counts[log.atomName] = (counts[log.atomName] || 0) + 1
-  return counts
+
+const completedRounds = computed(() => {
+  let count = 0
+  for (let round = 0; round < 64; round += 1) {
+    if (STAGES.every((_, stage) => isPassed(round, stage))) count += 1
+  }
+  return count
+})
+
+const allStagesPassed = computed(() => completedCells.value === 64 * STAGES.length)
+
+const stageSpec = computed(() => {
+  const step = currentRound.value
+  if (!step) return null
+  const [a, b, c, d] = step.registersBefore
+  const [t1, t2, t3, rotated, bNew] = step.correctAtoms
+  const common = { round: roundIndex.value + 1, stage: stageIndex.value + 1 }
+
+  switch (stageIndex.value) {
+    case 0:
+      return {
+        ...common,
+        kind: 'logic',
+        title: `求 ${step.logicFunc}(B, C, D)`,
+        prompt: '逐位完成本轮逻辑函数，写出 32 位结果。',
+        formula: step.logicFunc === 'F' ? '(B ∧ C) ∨ (¬B ∧ D)' : step.logicFunc === 'G' ? '(B ∧ D) ∨ (C ∧ ¬D)' : step.logicFunc === 'H' ? 'B ⊕ C ⊕ D' : 'C ⊕ (B ∨ ¬D)',
+        expected: step.fValue,
+        rows: [
+          { name: 'B', value: b },
+          { name: 'C', value: c },
+          { name: 'D', value: d },
+        ],
+      }
+    case 1:
+      return { ...common, kind: 'addition', title: '计算 T1 = A + f', prompt: '从右向左逐列相加，溢出部分按 32 位截断。', expected: t1, operands: [{ name: 'A', value: a }, { name: 'f', value: step.fValue }] }
+    case 2:
+      return { ...common, kind: 'addition', title: '计算 T2 = T1 + Mⱼ', prompt: `本轮使用消息字 M[${step.mjIdx}]。`, expected: t2, operands: [{ name: 'T1', value: t1 }, { name: `M[${step.mjIdx}]`, value: step.mj }] }
+    case 3:
+      return { ...common, kind: 'addition', title: '计算 T3 = T2 + Kᵢ', prompt: '加入本轮正弦常量，保留低 32 位。', expected: t3, operands: [{ name: 'T2', value: t2 }, { name: `K${roundIndex.value}`, value: step.ki }] }
+    case 4:
+      return { ...common, kind: 'rotation', title: `循环左移 ${step.shift} 位`, prompt: '可先填二进制草稿，再点选移位后成为最高位的位置。', expected: rotated, source: t3, shift: step.shift }
+    default:
+      return { ...common, kind: 'addition', title: '计算新的 B′ = ROT + B', prompt: '完成本轮最后一次 32 位加法。', expected: bNew, operands: [{ name: 'ROT', value: rotated }, { name: 'B', value: b }] }
+  }
+})
+
+const rotatedGroups = computed(() => {
+  if (rotationPointer.value === null || rotationBits.value.some((bit) => bit === '')) return []
+  const arranged = [...rotationBits.value.slice(rotationPointer.value), ...rotationBits.value.slice(0, rotationPointer.value)]
+  return Array.from({ length: 8 }, (_, index) => arranged.slice(index * 4, index * 4 + 4).join(''))
 })
 
 function persist() {
-  if (!task.value) return
-  task.value.updatedAt = Date.now()
-  const index = tasks.value.findIndex((item) => item.id === task.value.id)
-  if (index >= 0) tasks.value[index] = task.value
-  else tasks.value.push(task.value)
-  activeTaskId.value = task.value.id
-  saveWorkspace(tasks.value, activeTaskId.value)
+  const task = activeTask.value
+  if (!task) return
+  task.updatedAt = Date.now()
+  task.currentRound = roundIndex.value
+  task.currentStage = stageIndex.value
+  saveWorkspace(tasks.value, task.id)
 }
 
-function formatTime(value) {
-  return value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'medium' }).format(value) : '未记录'
+function resetQuestion() {
+  answer.value = ''
+  feedback.value = null
+  activeEntry.value = { type: 'answer', index: null }
+  carryMarks.value = Array(8).fill('')
+  additionScratchLinked.value = false
+  addScratch.value = Array(8).fill('')
+  logicScratch.value = Array(32).fill('')
+  rotationBits.value = Array(32).fill('')
+  rotationPointer.value = null
+  activeRotationBit.value = 0
+  if (finalMode.value && activeTask.value?.finalVerified && result.value) {
+    answer.value = result.value.digest.toUpperCase()
+    feedback.value = { ok: true, message: '该工单此前已验证通过，已自动恢复最终 MD5 摘要。' }
+  }
 }
 
-function formatHexBytes(hex) {
-  return hex.match(/.{1,2}/g)?.join(' ') || ''
-}
+watch([activeTaskId, roundIndex, stageIndex, finalMode], resetQuestion)
 
 function startTask() {
+  notice.value = ''
   if (!messageInput.value) return
   if (messageBytes.value > MAX_BYTES) {
-    notice.value = `只支持单个 MD5 消息块，请将消息缩短到 ${MAX_BYTES} bytes 以内。`
+    notice.value = `字符串超过单块上限，请缩短到 ${MAX_BYTES} bytes 以内。`
     return
   }
   const now = Date.now()
-  task.value = {
-    id: globalThis.crypto?.randomUUID?.() || `task-${now}-${Math.random().toString(16).slice(2)}`,
+  const task = prepareTask({
+    id: createId(),
     message: messageInput.value,
+    stageProgress: {},
     completedSteps: [],
     logs: [],
     createdAt: now,
     updatedAt: now,
-    startTimes: { 0: now },
-    endTimes: {},
-    printTimes: {},
-    verifyOpenTimes: {},
-    verifySubmitTimes: {},
-    finalVerified: false,
-    finalPrintTime: null,
-    finalVerifyOpenTime: null,
-    finalVerifySubmitTime: null,
-  }
-  tasks.value.push(task.value)
-  activeTaskId.value = task.value.id
-  saveWorkspace(tasks.value, activeTaskId.value)
+  })
+  tasks.value.unshift(task)
+  activeTaskId.value = task.id
+  roundIndex.value = 0
+  stageIndex.value = 0
+  finalMode.value = false
   messageInput.value = ''
-  notice.value = ''
-  openStep(0)
-}
-
-function selectTask(taskId) {
-  const selected = tasks.value.find((item) => item.id === taskId)
-  if (!selected) return
-  task.value = selected
-  activeTaskId.value = selected.id
-  saveWorkspace(tasks.value, activeTaskId.value)
-  notice.value = ''
-  goHome()
-}
-
-function deleteTask(taskId) {
-  tasks.value = tasks.value.filter((item) => item.id !== taskId)
-  if (activeTaskId.value === taskId) {
-    task.value = tasks.value[0] || null
-    activeTaskId.value = task.value?.id || null
-  }
-  saveWorkspace(tasks.value, activeTaskId.value)
-  page.value = 'home'
-  notice.value = '本地任务已删除。'
-}
-
-function goHome() {
-  page.value = 'home'
-  verification.value = null
-  digestVerification.value = null
-}
-
-function openStep(index) {
-  if (!result.value || index < 0 || index >= result.value.steps.length) return
-  stepId.value = index
-  task.value.startTimes[index] ||= Date.now()
+  view.value = 'game'
   persist()
-  page.value = 'step'
 }
 
-function openVerify(index = stepId.value) {
-  openStep(index)
-  if (!isUnlocked.value) return
-  answers.splice(0, 5, '', '', '', '', '')
-  verification.value = null
-  task.value.verifyOpenTimes[index] = Date.now()
+function openTask(task) {
+  activeTaskId.value = task.id
+  const next = firstIncomplete(task)
+  roundIndex.value = next?.round ?? Math.min(task.currentRound || 0, 63)
+  stageIndex.value = next?.stage ?? Math.min(task.currentStage || 0, STAGES.length - 1)
+  finalMode.value = !next
+  view.value = 'game'
+  notice.value = ''
+  saveWorkspace(tasks.value, task.id)
+}
+
+function switchTask(task) {
   persist()
-  page.value = 'verify'
+  openTask(task)
 }
 
-function sanitize(value, length = 8) {
-  return value.toUpperCase().replace(/[^0-9A-F]/g, '').slice(0, length)
+function removeTask(task) {
+  if (!globalThis.confirm(`删除“${task.message}”及其全部进度？`)) return
+  tasks.value = tasks.value.filter((item) => item.id !== task.id)
+  if (activeTaskId.value === task.id) activeTaskId.value = tasks.value[0]?.id || null
+  saveWorkspace(tasks.value, activeTaskId.value)
 }
 
-function setAnswer(index, value) {
-  answers[index] = sanitize(value)
-  activeInput.value = index
-  if (answers[index].length === 8 && index < 4) activeInput.value = index + 1
+function goLobby() {
+  persist()
+  view.value = 'lobby'
+  finalMode.value = false
+}
+
+function selectCell(round, stage) {
+  if (!isSelectable(round, stage)) return
+  finalMode.value = false
+  roundIndex.value = round
+  stageIndex.value = stage
+  persist()
+}
+
+function sanitizeHex(value, limit = 8) {
+  return String(value).toUpperCase().replace(/[^0-9A-F]/g, '').slice(0, limit)
+}
+
+function setAnswer(value) {
+  answer.value = sanitizeHex(value, finalMode.value ? 32 : 8)
+  activeEntry.value = { type: 'answer', index: null }
 }
 
 function keypad(key) {
-  const index = activeInput.value
-  if (key === 'backspace') answers[index] = answers[index].slice(0, -1)
-  else if (key === 'clear') answers[index] = ''
-  else if (key === 'next') activeInput.value = (index + 1) % 5
-  else setAnswer(index, answers[index] + key)
-}
-
-async function focusResult(elementRef) {
-  await nextTick()
-  const element = elementRef.value
-  if (!element) return
-  element.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  element.focus({ preventScroll: true })
-}
-
-async function verifyStep() {
-  const formatOk = answers.every((answer) => /^[0-9A-F]{8}$/.test(answer))
-  if (!formatOk) {
-    notice.value = '每项都需要填写恰好 8 位十六进制符号。'
-    return
-  }
-  notice.value = ''
-  const checked = currentStep.value.correctAtoms.map((expected, index) => {
-    const actual = Number.parseInt(answers[index], 16) >>> 0
-    const ok = expected === actual
-    if (!ok) {
-      task.value.logs.push({
-        timestamp: new Date().toISOString(),
-        stepIndex: stepId.value,
-        atomName: currentStep.value.atomNames[index],
-        expected: hex32(expected),
-        actual: hex32(actual),
-        diffBits: diffBits(expected, actual),
-      })
+  if (activeEntry.value.type === 'scratch' && stageSpec.value?.kind === 'addition') {
+    const index = activeEntry.value.index
+    if (key === 'backspace' || key === 'clear') updateAdditionScratch(index, '')
+    else if (/^[0-9A-F]$/.test(key)) {
+      updateAdditionScratch(index, key)
+      focusAdditionScratch(Math.max(0, index - 1))
     }
-    return { ok, name: currentStep.value.atomNames[index], expected, actual }
-  })
-  verification.value = checked
-  task.value.verifySubmitTimes[stepId.value] = Date.now()
-  if (checked.every((item) => item.ok)) {
-    if (!completed.value.has(stepId.value)) task.value.completedSteps.push(stepId.value)
-    task.value.completedSteps.sort((a, b) => a - b)
-    task.value.endTimes[stepId.value] = Date.now()
-  }
-  persist()
-  await focusResult(verificationResult)
-}
-
-function continueAfterVerify() {
-  if (!verification.value?.every((item) => item.ok)) return
-  if (stepId.value < result.value.steps.length - 1) openStep(stepId.value + 1)
-  else openFinalVerify()
-}
-
-function recordPrint(final = false) {
-  if (final && !allCompleted.value) {
-    notice.value = '请先完成全部 64 轮。'
-    return false
-  }
-  if (final) task.value.finalPrintTime = Date.now()
-  else task.value.printTimes[stepId.value] = Date.now()
-  persist()
-  return true
-}
-
-function getPrintUrl(final = false) {
-  if (!task.value) return '#'
-  const url = new URL(globalThis.location.href)
-  url.search = ''
-  url.hash = ''
-  url.searchParams.set('print', final ? 'final' : 'step')
-  url.searchParams.set('task', task.value.id)
-  if (!final) url.searchParams.set('step', String(stepId.value))
-  return url.toString()
-}
-
-function requestPrint() {
-  globalThis.print()
-}
-
-function closePrintWindow() {
-  globalThis.close()
-}
-
-function openFinalVerify() {
-  if (!allCompleted.value) {
-    notice.value = '请先完成全部 64 轮。'
-    openStep(nextStep.value)
     return
   }
-  task.value.finalVerifyOpenTime ||= Date.now()
-  persist()
-  digestVerification.value = null
-  page.value = 'final-verify'
+  if (key === 'backspace') answer.value = answer.value.slice(0, -1)
+  else if (key === 'clear') answer.value = ''
+  else answer.value = sanitizeHex(answer.value + key, finalMode.value ? 32 : 8)
+  activeEntry.value = { type: 'answer', index: null }
 }
 
-async function verifyDigest() {
-  const normalized = sanitize(digestAnswer.value, 32)
-  digestAnswer.value = normalized
-  const formatOk = /^[0-9A-F]{32}$/.test(normalized)
-  const ok = formatOk && normalized.toLowerCase() === result.value.digest
-  digestVerification.value = { ok, formatOk }
-  task.value.finalVerifySubmitTime = Date.now()
-  task.value.finalVerified = ok
-  if (!ok && formatOk) {
-    task.value.logs.push({
+function updateAdditionScratch(index, value) {
+  addScratch.value[index] = value
+  if (!additionScratchLinked.value && addScratch.value.every(Boolean)) additionScratchLinked.value = true
+  if (additionScratchLinked.value) answer.value = addScratch.value.join('')
+}
+
+function focusAdditionScratch(index) {
+  activeEntry.value = { type: 'scratch', index }
+  nextTick(() => scratchButtons.value[index]?.focus())
+}
+
+function additionScratchKeydown(event) {
+  if (activeEntry.value.type !== 'scratch') return
+  const key = event.key.toUpperCase()
+  if (/^[0-9A-F]$/.test(key)) {
+    event.preventDefault()
+    keypad(key)
+  } else if (event.key === 'Backspace' || event.key === 'Delete') {
+    event.preventDefault()
+    keypad('backspace')
+  } else if (event.key === 'ArrowLeft') {
+    event.preventDefault()
+    focusAdditionScratch(Math.max(0, activeEntry.value.index - 1))
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault()
+    focusAdditionScratch(Math.min(7, activeEntry.value.index + 1))
+  }
+}
+
+function toggleCarry(index) {
+  carryMarks.value[index] = carryMarks.value[index] === '' ? '1' : ''
+}
+
+function toggleBit(collection, index) {
+  const next = collection[index] === '' ? '0' : collection[index] === '0' ? '1' : ''
+  collection[index] = next
+}
+
+function copyLogicBit(bit, index) {
+  logicScratch.value[index] = bit
+}
+
+function focusRotationBit(index) {
+  const nextIndex = Math.max(0, Math.min(31, index))
+  activeRotationBit.value = nextIndex
+  nextTick(() => rotationBitInputs.value[nextIndex]?.focus())
+}
+
+function setRotationBit(index, bit, advance = true) {
+  rotationBits.value[index] = bit
+  focusRotationBit(advance ? index + 1 : index)
+}
+
+function rotationBitKeydown(event, index) {
+  if (event.key === '1' || event.key === 'ArrowUp') {
+    event.preventDefault()
+    setRotationBit(index, '1')
+  } else if (event.key === '0' || event.key === 'ArrowDown') {
+    event.preventDefault()
+    setRotationBit(index, '0')
+  } else if (event.key === 'ArrowLeft') {
+    event.preventDefault()
+    focusRotationBit(index - 1)
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault()
+    focusRotationBit(index + 1)
+  }
+}
+
+async function verifyCurrent() {
+  const normalized = sanitizeHex(answer.value, 8)
+  answer.value = normalized
+  if (normalized.length !== 8) {
+    feedback.value = { ok: false, format: true, message: '最终答案需要恰好 8 位十六进制。' }
+    return
+  }
+  const expected = stageSpec.value.expected >>> 0
+  const actual = Number.parseInt(normalized, 16) >>> 0
+  const ok = expected === actual
+  const key = keyFor(roundIndex.value, stageIndex.value)
+  const previous = activeTask.value.stageProgress[key] || { attempts: 0, passed: false, hadError: false }
+  const attempts = previous.attempts + 1
+  activeTask.value.stageProgress[key] = {
+    attempts,
+    passed: previous.passed || ok,
+    hadError: previous.hadError || !ok,
+    lastAnswer: normalized,
+    verifiedAt: Date.now(),
+  }
+  if (!ok) {
+    activeTask.value.logs.push({
       timestamp: new Date().toISOString(),
-      stepIndex: 'Final',
-      atomName: 'Final MD5 digest',
-      expected: result.value.digest.toUpperCase(),
-      actual: normalized,
-      diffBits: null,
+      round: roundIndex.value,
+      stage: stageIndex.value,
+      atomName: STAGES[stageIndex.value].label,
+      expected: hex32(expected),
+      actual: hex32(actual),
+      diffBits: diffBits(expected, actual),
     })
   }
+
+  const roundComplete = STAGES.every((_, index) => activeTask.value.stageProgress[keyFor(roundIndex.value, index)]?.passed)
+  if (roundComplete && !activeTask.value.completedSteps.includes(roundIndex.value)) {
+    activeTask.value.completedSteps.push(roundIndex.value)
+    activeTask.value.completedSteps.sort((a, b) => a - b)
+  }
+  feedback.value = ok
+    ? { ok: true, message: previous.hadError ? '答案正确。这一格保留橙色，记录本题曾经出错。' : '一次通过，进度格已点亮为绿色。' }
+    : { ok: false, message: `还差一点：有 ${diffBits(expected, actual)} 个二进制位不同。草稿不会参与判定。` }
   persist()
-  if (ok) page.value = 'report'
-  else await focusResult(digestVerificationResult)
+  await nextTick()
+  answerInput.value?.focus()
 }
 
-function registerRows() {
-  return result.value.registers.map((word, index) => ({
-    name: ['A', 'B', 'C', 'D'][index],
-    word: hex32(word),
-    output: hex32(word).match(/../g).reverse().join(''),
-  }))
+function advance() {
+  if (!isPassed(roundIndex.value, stageIndex.value)) return
+  if (stageIndex.value < STAGES.length - 1) stageIndex.value += 1
+  else if (roundIndex.value < 63) {
+    roundIndex.value += 1
+    stageIndex.value = 0
+  } else finalMode.value = true
+  persist()
 }
 
-function timeline() {
-  return result.value.steps.map((_, index) => ({
-    step: index,
-    completed: completed.value.has(index),
-    duration: task.value.endTimes[index] && task.value.startTimes[index]
-      ? ((task.value.endTimes[index] - task.value.startTimes[index]) / 1000).toFixed(1)
-      : null,
-  }))
+function openFinal() {
+  if (!allStagesPassed.value) return
+  finalMode.value = true
 }
 
-function markdownReport() {
-  const counts = Object.entries(errorCounts.value).map(([name, count]) => `- ${name}: ${count}`).join('\n') || '- 无错误'
-  const logs = task.value.logs.map((log) => `| ${log.timestamp} | ${log.stepIndex} | ${log.atomName} | ${log.expected} | ${log.actual} |`).join('\n') || '| - | - | 无错误 | - | - |'
-  return `# MD5-Scribe Final Report\n\n- 原始消息: \`${task.value.message}\`\n- 最终 MD5: \`${result.value.digest}\`\n- 完成轮数: ${completed.value.size} / ${result.value.steps.length}\n- 最终验证: ${task.value.finalVerified ? '已完成' : '未完成'}\n- 创建时间: ${formatTime(task.value.createdAt)}\n\n## 错误类型\n\n${counts}\n\n## 审计日志\n\n| 时间 | Step | 运算 | 预期值 | 实际值 |\n|---|---:|---|---|---|\n${logs}\n`
+function verifyFinal() {
+  const normalized = sanitizeHex(answer.value, 32)
+  answer.value = normalized
+  if (normalized.length !== 32) {
+    feedback.value = { ok: false, format: true, message: '最终摘要需要恰好 32 位十六进制。' }
+    return
+  }
+  const ok = normalized.toLowerCase() === result.value.digest
+  activeTask.value.finalAttempts += 1
+  activeTask.value.finalVerified = ok || activeTask.value.finalVerified
+  if (!ok) activeTask.value.finalStatus = 'error'
+  else if (activeTask.value.finalStatus !== 'error') activeTask.value.finalStatus = 'success'
+  feedback.value = ok
+    ? { ok: true, message: '解密工单完成。最终 MD5 摘要验证通过。' }
+    : { ok: false, message: '摘要不匹配。请检查四个寄存器的小端序拼接。' }
+  persist()
 }
 
-function downloadReport() {
-  const blob = new Blob([markdownReport()], { type: 'text/markdown;charset=utf-8' })
+function exportJSON() {
+  const blob = new Blob([serializeWorkspace(tasks.value, activeTaskId.value)], { type: 'application/json;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `md5-scribe-${Date.now()}.md`
+  anchor.download = `md5-scribe-progress-${new Date().toISOString().slice(0, 10)}.json`
   anchor.click()
   URL.revokeObjectURL(url)
+}
+
+async function importJSON(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  try {
+    const imported = parseWorkspaceJSON(await file.text())
+    tasks.value = imported.tasks.map(prepareTask)
+    activeTaskId.value = imported.activeTaskId || tasks.value[0]?.id || null
+    saveWorkspace(tasks.value, activeTaskId.value)
+    view.value = 'lobby'
+    notice.value = `已导入 ${tasks.value.length} 个解密进度。`
+  } catch (error) {
+    notice.value = error instanceof Error ? error.message : 'JSON 导入失败。'
+  }
+}
+
+function formatTime(value) {
+  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(value)
+}
+
+function taskCellCount(task) {
+  return Object.values(task.stageProgress || {}).filter((entry) => entry?.passed).length
 }
 </script>
 
 <template>
-  <nav v-if="page !== 'print' && page !== 'final-print'" class="navbar no-print">
-    <button class="brand-button" @click="goHome">
-      <span class="logo">MD5-Scribe</span>
-      <span class="tagline">本地优先 · 64 轮手算验证</span>
-    </button>
-    <div class="nav-links">
-      <button @click="goHome">首页</button>
-      <button v-if="task" @click="openStep(nextStep)">当前任务</button>
-      <button v-if="task" @click="page = 'report'">报告</button>
-    </div>
-  </nav>
-
-  <main class="container" :class="{ 'print-container': page === 'print' || page === 'final-print' }">
-    <div v-if="notice" class="flash flash-error no-print">{{ notice }}</div>
-
-    <template v-if="page === 'home'">
-      <div class="hero">
-        <div class="local-badge">数据仅保存在此浏览器</div>
-        <h1>MD5-Scribe</h1>
-        <p class="subtitle">一步一步，手算并验证 MD5 的 64 轮逻辑运算</p>
+  <div class="app-shell has-reference">
+    <header class="topbar">
+      <button class="brand" type="button" @click="goLobby">
+        <span class="brand-mark">MD5</span>
+        <span><strong>MD5 SCRIBE</strong><small>手算解密训练场</small></span>
+      </button>
+      <div v-if="view === 'game' && tasks.length > 1" class="task-tabs" aria-label="切换解密进度">
+        <button v-for="item in tasks" :key="item.id" type="button" :class="{ active: item.id === activeTaskId }" @click="switchTask(item)">{{ item.message || '空字符串' }}</button>
       </div>
-
-      <div v-if="tasks.length" class="card task-list-card">
-        <div class="section-heading"><div><h2>本地挑战</h2><p>{{ tasks.length }} 个独立任务，进度分别保存在此浏览器。</p></div></div>
-        <div class="task-list">
-          <article v-for="item in tasks" :key="item.id" class="task-row" :class="{ 'is-active': item.id === activeTaskId }">
-            <button type="button" class="task-select" @click="selectTask(item.id)">
-              <span class="task-message mono">{{ item.message }}</span>
-              <span class="task-progress">{{ item.completedSteps.length }} / 64 轮</span>
-              <span class="task-updated">{{ formatTime(item.updatedAt) }}</span>
-            </button>
-            <button type="button" class="btn btn-small btn-secondary" @click="deleteTask(item.id)">删除</button>
-          </article>
-        </div>
-        <div v-if="task" class="actions compact-actions">
-          <button type="button" class="btn btn-primary" @click="task.finalVerified ? page = 'report' : allCompleted ? openFinalVerify() : openStep(nextStep)">
-            {{ task.finalVerified ? '查看当前报告' : allCompleted ? '继续当前最终验证' : `继续当前 Step ${nextStep}` }}
-          </button>
-        </div>
+      <div class="top-actions">
+        <button type="button" class="text-button" @click="importInput?.click()">导入 JSON</button>
+        <button type="button" class="text-button" :disabled="!tasks.length" @click="exportJSON">导出 JSON</button>
       </div>
+      <input ref="importInput" class="visually-hidden" type="file" accept="application/json,.json" @change="importJSON" />
+    </header>
 
-      <div class="card input-card">
-        <h2>开始新的挑战</h2>
-        <form class="input-form" @submit.prevent="startTask">
-          <div class="form-group">
-            <label for="message">输入字符串</label>
-            <input id="message" v-model="messageInput" type="text" placeholder="例如: hello" required autofocus />
-            <div class="message-meter">
-              <div class="message-meter-meta"><span>单块容量</span><span><strong>{{ messageBytes }}</strong> / {{ MAX_BYTES }} bytes</span></div>
-              <div class="message-meter-track"><div class="message-meter-fill" :class="{ 'is-rich': messageBytes >= 44, 'is-over': messageBytes > MAX_BYTES }" :style="{ width: `${Math.min(messageBytes / MAX_BYTES * 100, 100)}%` }"></div></div>
-              <div class="message-meter-hint">消息按 UTF-8 字节计数，单块练习最多 55 bytes。</div>
-            </div>
+    <main v-if="view === 'lobby'" class="lobby">
+      <div v-if="notice" class="notice">{{ notice }}</div>
+      <section class="lobby-intro">
+        <span class="eyebrow">LOCAL DESKTOP GAME</span>
+        <h1>把 MD5 的 384 个小步骤<br />一格一格点亮。</h1>
+        <p>每次只解决一个问题。草稿随便写，系统只检查最终答案。</p>
+      </section>
+
+      <div class="lobby-grid">
+        <section class="new-mission panel">
+          <div class="panel-number">NEW</div>
+          <h2>创建解密工单</h2>
+          <label for="message">要计算的字符串</label>
+          <input id="message" v-model="messageInput" type="text" placeholder="例如：hello" autofocus @keydown.enter="startTask" />
+          <div class="byte-meta"><span>UTF-8 单块长度</span><strong :class="{ over: messageBytes > MAX_BYTES }">{{ messageBytes }} / {{ MAX_BYTES }} bytes</strong></div>
+          <div class="byte-track"><span :class="{ over: messageBytes > MAX_BYTES }" :style="{ width: `${Math.min(messageBytes / MAX_BYTES * 100, 100)}%` }"></span></div>
+          <p class="field-note">练习限定在一个 MD5 消息块内。</p>
+          <button class="primary-button" type="button" :disabled="!messageInput || messageBytes > MAX_BYTES" @click="startTask">进入工单</button>
+        </section>
+
+        <section class="missions panel">
+          <div class="section-title-row"><div><span class="eyebrow">SAVED RUNS</span><h2>解密进度</h2></div><span class="mission-count">{{ tasks.length }}</span></div>
+          <div v-if="tasks.length" class="mission-list">
+            <article v-for="item in tasks" :key="item.id" class="mission-row">
+              <button class="mission-main" type="button" @click="openTask(item)">
+                <span class="mission-message">“{{ item.message || '空字符串' }}”</span>
+                <span class="mission-progress"><i><b :style="{ width: `${taskCellCount(item) / 384 * 100}%` }"></b></i>{{ taskCellCount(item) }} / 384</span>
+                <span class="mission-time">{{ formatTime(item.updatedAt) }}</span>
+              </button>
+              <button class="delete-button" type="button" aria-label="删除工单" @click="removeTask(item)">×</button>
+            </article>
           </div>
-          <button class="btn btn-primary" :disabled="messageBytes > MAX_BYTES">初始化并开始</button>
-        </form>
+          <div v-else class="empty-missions"><span>00</span><p>还没有工单。创建一个字符串，第一格就会解锁。</p></div>
+        </section>
       </div>
+    </main>
 
-      <div class="info-grid">
-        <div class="info-card"><h3>1. 浏览器计算</h3><p>MD5 填充、64 轮运算和校验全部在当前设备完成。</p></div>
-        <div class="info-card"><h3>2. 打印工单</h3><p>每轮都可使用浏览器打印或另存为 PDF。</p></div>
-        <div class="info-card"><h3>3. 自动恢复</h3><p>刷新或离线重开后，从 localStorage 恢复进度。</p></div>
-        <div class="info-card"><h3>4. 本地导出</h3><p>最终审计报告直接下载为 Markdown 文件。</p></div>
-      </div>
-    </template>
-
-    <template v-else-if="page === 'step' && currentStep">
-      <div class="step-header">
-        <div class="progress-bar"><div class="progress-fill" :style="{ width: `${(stepId + 1) / result.steps.length * 100}%` }"></div></div>
-        <div class="step-meta"><span class="step-label">Step {{ stepId }} / {{ result.steps.length - 1 }}</span><span class="step-status" :class="completed.has(stepId) ? 'status-completed' : isUnlocked ? 'status-unlocked' : 'status-locked'">{{ completed.has(stepId) ? '已完成' : isUnlocked ? '已解锁' : '未解锁' }}</span></div>
-      </div>
-      <div class="card"><h2>原始消息</h2><div class="data-row"><span class="data-label">字符串:</span><span class="data-value mono">{{ task.message }}</span></div><div class="data-row"><span class="data-label">Hex:</span><span class="data-value mono small wrap-anywhere">{{ result.messageHex }}</span></div></div>
-      <div class="card"><h2>本轮寄存器状态（输入）</h2><div class="registers-grid"><div v-for="(reg, index) in currentStep.registersBefore" :key="index" class="register-box"><div class="reg-name">{{ ['A','B','C','D'][index] }}</div><div class="reg-hex">{{ hex32(reg) }}</div><div class="reg-bin"><span>{{ bin32(reg).slice(0,16) }}</span><span>{{ bin32(reg).slice(16) }}</span></div></div></div></div>
-      <div class="card"><h2>本轮运算参数</h2><div class="params-grid"><div class="param-box"><div class="param-label">逻辑函数</div><div class="param-value">{{ currentStep.logicFunc }}</div></div><div class="param-box"><div class="param-label">M_j 索引</div><div class="param-value">{{ currentStep.mjIdx }}</div></div><div class="param-box"><div class="param-label">M_j 值</div><div class="param-value mono">{{ hex32(currentStep.mj) }}</div></div><div class="param-box"><div class="param-label">K_i</div><div class="param-value mono">{{ hex32(currentStep.ki) }}</div></div><div class="param-box"><div class="param-label">左移 s</div><div class="param-value">{{ currentStep.shift }}</div></div></div></div>
-      <div class="actions"><a class="btn btn-secondary" :href="getPrintUrl(false)" target="_blank" rel="noopener" @click="recordPrint(false)">查看打印工单</a><button class="btn" :class="isUnlocked ? 'btn-primary' : 'btn-disabled'" :disabled="!isUnlocked" @click="openVerify()">开始验证</button></div>
-      <div class="step-nav"><button v-if="stepId > 0" class="btn btn-small" @click="openStep(stepId - 1)">← 上一步</button><button v-if="stepId < result.steps.length - 1" class="btn btn-small" @click="openStep(stepId + 1)">下一步 →</button><button v-else class="btn btn-small btn-accent" @click="openFinalVerify">验证最终 MD5</button></div>
-    </template>
-
-    <template v-else-if="page === 'verify' && currentStep">
-      <div class="step-header"><div class="progress-bar"><div class="progress-fill" :style="{ width: `${(stepId + 1) / result.steps.length * 100}%` }"></div></div><div class="step-meta"><span class="step-label">Step {{ stepId }} / {{ result.steps.length - 1 }} — 验证</span></div></div>
-      <div class="card"><h2>运算参数</h2><div class="params-grid"><div class="param-box"><div class="param-label">函数</div><div class="param-value">{{ currentStep.logicFunc }}</div></div><div class="param-box"><div class="param-label">M_j</div><div class="param-value mono">{{ hex32(currentStep.mj) }}</div></div><div class="param-box"><div class="param-label">K_i</div><div class="param-value mono">{{ hex32(currentStep.ki) }}</div></div><div class="param-box"><div class="param-label">s</div><div class="param-value">{{ currentStep.shift }}</div></div></div></div>
-      <div v-if="verification" ref="verificationResult" class="card verification-result" tabindex="-1" role="status" aria-live="polite"><h2>验证结果</h2><div v-for="item in verification" :key="item.name" class="atom-check" :class="item.ok ? 'atom-ok' : 'atom-error'"><div class="atom-header"><span class="atom-name">{{ item.name }}</span><span class="atom-badge" :class="item.ok ? 'badge-ok' : 'badge-error'">{{ item.ok ? '正确' : '错误' }}</span></div><div v-if="!item.ok" class="atom-detail"><div class="compare-row"><span class="compare-label">预期:</span><span class="compare-hex mono">{{ hex32(item.expected) }}</span><span class="compare-bin mono small">{{ bin32(item.expected) }}</span></div><div class="compare-row"><span class="compare-label">实际:</span><span class="compare-hex mono error">{{ hex32(item.actual) }}</span><span class="compare-bin mono small error">{{ bin32(item.actual) }}</span></div></div></div><button v-if="verification.every(item => item.ok)" class="btn btn-primary result-next" @click="continueAfterVerify">{{ stepId === result.steps.length - 1 ? '进入最终验证' : '进入下一轮' }}</button></div>
-      <div class="card verify-form-card"><h2>输入您的手算结果</h2><form class="verify-form" @submit.prevent="verifyStep"><div v-for="(name, index) in currentStep.atomNames" :key="name" class="form-group atom-group"><label :for="`atom-${index}`">{{ name }}</label><input :id="`atom-${index}`" type="text" :value="answers[index]" class="mono input-hex" :class="{ 'input-active': activeInput === index }" maxlength="8" placeholder="8 位十六进制" autocomplete="off" autocapitalize="characters" spellcheck="false" @focus="activeInput = index" @input="setAnswer(index, $event.target.value)" /><small>请输入 32 位结果的 8 位十六进制表示</small></div><div class="form-actions"><button class="btn btn-primary">提交验证</button><a class="btn btn-secondary" :href="getPrintUrl(false)" target="_blank" rel="noopener" @click="recordPrint(false)">查看打印工单</a></div></form></div>
-      <div class="hex-keypad"><div class="hex-keypad-title">HEX</div><div class="hex-keypad-grid"><button v-for="key in '0123456789ABCDEF'" :key="key" class="hex-key" @click="keypad(key)">{{ key }}</button></div><div class="hex-keypad-actions"><button class="hex-key hex-key-wide" @click="keypad('backspace')">←</button><button class="hex-key hex-key-wide" @click="keypad('clear')">清空</button><button class="hex-key hex-key-wide" @click="keypad('next')">下个</button></div></div>
-      <div class="step-nav"><button class="btn btn-small" @click="openStep(stepId)">控制台</button></div>
-    </template>
-
-    <template v-else-if="page === 'print' && currentStep">
-      <div class="print-controls no-print">
-        <h2>打印工单预览</h2>
-        <p>请使用浏览器“打印为 PDF”功能保存此工单。Step 0 包含单独的参考附录页。</p>
-        <button type="button" class="btn btn-primary" @click="requestPrint">立即打印</button>
-      </div>
-
-      <div class="print-page">
-        <div class="print-header">
-          <div class="print-title">MD5-Scribe 手算工单</div>
-          <div class="print-meta">
-            <span>Step: <strong>{{ stepId }} / {{ result.steps.length - 1 }}</strong></span>
-            <span>函数: <strong>{{ currentStep.logicFunc }}</strong></span>
-            <span>s = <strong>{{ currentStep.shift }}</strong></span>
+    <main v-else-if="activeTask && result" class="game">
+      <section class="progress-deck" :class="{ collapsed: !progressOpen }">
+        <div class="progress-heading">
+          <div><span class="eyebrow">WORKSHEET MATRIX</span><h2>工单进度</h2></div>
+          <div class="progress-summary"><strong>{{ completedCells }}</strong><span>/ 384 小题</span><strong>{{ completedRounds }}</strong><span>/ 64 轮</span></div>
+          <div class="legend"><span><i class="idle"></i>未开始</span><span><i class="success"></i>一次通过</span><span><i class="error"></i>曾经出错</span></div>
+          <button type="button" class="progress-toggle" :aria-expanded="progressOpen" @click="progressOpen = !progressOpen">{{ progressOpen ? '收起矩阵 ↑' : '展开矩阵 ↓' }}</button>
+        </div>
+        <div v-show="progressOpen" class="matrix-scroll">
+          <div class="progress-matrix">
+            <div class="corner-cell">步骤 / 轮次</div>
+            <div v-for="round in 64" :key="`head-${round}`" class="round-head" :class="{ current: round - 1 === roundIndex }">{{ String(round).padStart(2, '0') }}</div>
+            <template v-for="(stage, sIndex) in STAGES" :key="stage.short">
+              <div class="stage-head"><strong>{{ stage.short }}</strong><span>{{ stage.label }}</span></div>
+              <button v-for="round in 64" :key="`${sIndex}-${round}`" type="button" class="progress-cell" :class="[cellStatus(round - 1, sIndex), { active: round - 1 === roundIndex && sIndex === stageIndex && !finalMode, locked: !isSelectable(round - 1, sIndex) }]" :disabled="!isSelectable(round - 1, sIndex)" :aria-label="`第 ${round} 轮，${stage.label}，${cellStatus(round - 1, sIndex)}`" @click="selectCell(round - 1, sIndex)"></button>
+            </template>
           </div>
         </div>
+      </section>
 
-        <div class="print-section print-message-section">
-          <div class="print-section-heading">
-            <h3>原始消息</h3>
-            <span>{{ Array.from(task.message).length }} 字符 · {{ result.messageHex.length / 2 }} bytes</span>
-          </div>
-          <div class="message-display-grid">
-            <div class="message-display-row message-text-row">
-              <span class="message-kind">字符串</span>
-              <div class="message-text"><span class="message-quote">“</span>{{ task.message }}<span class="message-quote">”</span></div>
-            </div>
-            <div class="message-display-row message-hex-row">
-              <span class="message-kind">UTF-8 Hex</span>
-              <div class="message-hex mono">{{ formatHexBytes(result.messageHex) }}</div>
-            </div>
-          </div>
-        </div>
+      <section class="question-layout">
+        <aside class="round-rail">
+          <button type="button" class="back-lobby" @click="goLobby">← 工单列表</button>
+          <div class="round-number"><small>ROUND</small><strong>{{ String(roundIndex + 1).padStart(2, '0') }}</strong><span>/ 64</span></div>
+          <div class="rail-message"><small>原始字符串</small><p>“{{ activeTask.message || '空字符串' }}”</p><span>{{ encoder.encode(activeTask.message).length }} bytes</span></div>
+          <div v-if="currentRound" class="rail-params"><div><span>函数</span><b>{{ currentRound.logicFunc }}</b></div><div><span>Mⱼ</span><b>{{ currentRound.mjIdx }}</b></div><div><span>移位</span><b>{{ currentRound.shift }}</b></div></div>
+          <button v-if="allStagesPassed" type="button" class="final-link" :class="activeTask.finalStatus" @click="openFinal">FINAL DIGEST →</button>
+        </aside>
 
-        <div class="print-section">
-          <h3>本轮输入寄存器</h3>
-          <div class="registers-compact">
-            <div v-for="(reg, index) in currentStep.registersBefore" :key="index" class="reg-col">
-              <div class="reg-col-name">{{ ['A', 'B', 'C', 'D'][index] }}</div>
-              <div class="reg-col-hex">{{ hex32(reg) }}</div>
-              <div class="reg-col-bin">
-                <span>{{ bin32(reg).slice(0, 16) }}</span>
-                <span>{{ bin32(reg).slice(16) }}</span>
+        <article class="question-card">
+          <template v-if="!finalMode && stageSpec">
+            <header class="question-header">
+              <div><span class="eyebrow">ROUND {{ String(roundIndex + 1).padStart(2, '0') }} · STEP {{ String(stageIndex + 1).padStart(2, '0') }}</span><h1>{{ stageSpec.title }}</h1><p>{{ stageSpec.prompt }}</p></div>
+              <span class="step-chip">{{ STAGES[stageIndex].short }}</span>
+            </header>
+
+            <section v-if="stageSpec.kind === 'logic'" class="scratch logic-template">
+              <div class="formula-card"><span>{{ currentRound.logicFunc }}</span><code>{{ stageSpec.formula }}</code></div>
+              <div class="bit-workspace">
+                <div class="bit-index-row"><span></span><i v-for="n in 32" :key="n">{{ (32 - n) % 4 === 0 ? 32 - n : '' }}</i></div>
+                <div v-for="row in stageSpec.rows" :key="row.name" class="bit-row source-row"><strong>{{ row.name }}</strong><button v-for="(bit, index) in bin32(row.value)" :key="index" type="button" :aria-label="`把 ${row.name} 的第 ${32 - index} 位 ${bit} 填入 f 草稿`" @click="copyLogicBit(bit, index)">{{ bit }}</button></div>
+                <div class="logic-result-groups"><strong>f</strong><div v-for="group in 8" :key="group" class="four-bit-scratch"><button v-for="bit in 4" :key="bit" type="button" @click="toggleBit(logicScratch, (group - 1) * 4 + bit - 1)">{{ logicScratch[(group - 1) * 4 + bit - 1] || '·' }}</button></div></div>
               </div>
-            </div>
-          </div>
-        </div>
+              <p class="scratch-note">点击 B / C / D 的某一位可快速复制到 f；点击 f 格切换 0 / 1 / 空白。草稿不参与校验</p>
+            </section>
 
-        <div class="print-section">
-          <h3>常量与消息字</h3>
-          <div class="const-grid">
-            <div>M_j[{{ currentStep.mjIdx }}] = <span class="mono">{{ hex32(currentStep.mj) }}</span></div>
-            <div>K_i = <span class="mono">{{ hex32(currentStep.ki) }}</span></div>
-            <div>s = <span class="mono">{{ currentStep.shift }}</span> 位</div>
-          </div>
-        </div>
+            <section v-else-if="stageSpec.kind === 'addition'" class="scratch addition-template">
+              <div class="addition-board">
+                <div class="add-line carry-line"><span>进位</span><button v-for="(_, index) in carryMarks" :key="index" type="button" :class="{ marked: carryMarks[index] }" @click="toggleCarry(index)">{{ carryMarks[index] || '·' }}</button></div>
+                <div v-for="(operand, opIndex) in stageSpec.operands" :key="operand.name" class="add-line operand-line"><span>{{ opIndex ? '+ ' : '' }}{{ operand.name }}</span><i v-for="(digit, index) in hex32(operand.value)" :key="index">{{ digit }}</i></div>
+                <div class="add-divider"></div>
+                <div class="add-line scratch-answer"><span>草稿</span><button v-for="(_, index) in addScratch" :key="index" ref="scratchButtons" type="button" :class="{ focused: activeEntry.type === 'scratch' && activeEntry.index === index }" @click="focusAdditionScratch(index)" @focus="activeEntry = { type: 'scratch', index }" @keydown="additionScratchKeydown">{{ addScratch[index] || '·' }}</button></div>
+              </div>
+              <p class="scratch-note">点进位格进行标记；草稿支持实体键盘和下方键盘，填满 8 位后会持续同步到最终答案</p>
+            </section>
 
-        <div class="worksheet-block">
-          <div class="ws-title">步骤 01 — 逻辑函数 f = {{ currentStep.logicFunc }}(B, C, D)</div>
-          <div class="ws-subtitle">B, C, D 的二进制/十六进制对照</div>
-          <table class="bit-table">
-            <tbody>
-              <tr>
-                <th aria-label="寄存器"></th>
-                <th v-for="index in 32" :key="index" class="bit-index">{{ 32 - index }}</th>
-              </tr>
-              <tr v-for="(registerIndex, rowIndex) in [1, 2, 3]" :key="registerIndex">
-                <td class="reg-label">{{ ['B', 'C', 'D'][rowIndex] }}</td>
-                <td v-for="(bit, bitIndex) in bin32(currentStep.registersBefore[registerIndex])" :key="bitIndex" class="bit-cell">{{ bit }}</td>
-              </tr>
-              <tr class="result-row">
-                <td class="reg-label">f</td>
-                <td v-for="index in 32" :key="index" class="bit-cell result"></td>
-              </tr>
-            </tbody>
-          </table>
-          <div class="hex-grid f-hex-grid">
-            <div class="hex-row">
-              <span>f (Hex):</span>
-              <div v-for="index in 8" :key="index" class="hex-box"><div class="hex-char"></div></div>
-            </div>
-          </div>
-        </div>
+            <section v-else class="scratch rotation-template">
+              <div class="rotation-source"><span>T3 (HEX)</span><strong>{{ hex32(stageSpec.source) }}</strong><em>左移 {{ stageSpec.shift }} 位</em></div>
+              <div class="pointer-label">先填二进制草稿</div>
+              <div class="rotation-bits">
+                <div v-for="(_, index) in rotationBits" :key="index" class="rotation-bit-picker">
+                  <button type="button" class="bit-arrow bit-one" :aria-label="`第 ${32 - index} 位填 1`" @click="setRotationBit(index, '1')">▴</button>
+                  <button ref="rotationBitInputs" type="button" class="bit-value" :class="{ filled: rotationBits[index] !== '', active: activeRotationBit === index }" :aria-label="`第 ${32 - index} 位，当前${rotationBits[index] || '未填写'}`" @click="focusRotationBit(index)" @focus="activeRotationBit = index" @keydown="rotationBitKeydown($event, index)">{{ rotationBits[index] || '·' }}</button>
+                  <button type="button" class="bit-arrow bit-zero" :aria-label="`第 ${32 - index} 位填 0`" @click="setRotationBit(index, '0')">▾</button>
+                </div>
+              </div>
+              <div class="pointer-track"><div v-for="group in 8" :key="group" class="pointer-group"><button v-for="bit in 4" :key="bit" type="button" :class="{ selected: rotationPointer === (group - 1) * 4 + bit - 1 }" :aria-label="`将第 ${(group - 1) * 4 + bit} 位标为移位起点`" @click="rotationPointer = (group - 1) * 4 + bit - 1">{{ rotationPointer === (group - 1) * 4 + bit - 1 ? '↑' : '·' }}</button></div></div>
+              <div class="pointer-label pointer-label-after">再点选移位后成为最高位的位置</div>
+              <div v-if="rotatedGroups.length" class="four-bit-groups"><span v-for="(group, index) in rotatedGroups" :key="index">{{ group }}</span></div>
+              <div v-else class="four-bit-placeholder">填满 32 位并标记指针后，这里会自动拆成 8 组 4bit。</div>
+              <div class="rotation-help">
+                <p><span>键盘</span><b>1 / ↑</b> 填 1，<b>0 / ↓</b> 填 0</p>
+                <p><span>页面</span>点击每一位的上、下箭头快速填写</p>
+                <small>每次填写后焦点自动右移。系统只按 4bit 分组，不转换十六进制；草稿与指针不参与校验。</small>
+              </div>
+            </section>
 
-        <div class="worksheet-block">
-          <div class="ws-title">步骤 02 — 累加 T1 = A + f</div>
-          <div class="addition-layout">
-            <div class="add-row"><span class="add-label">A</span><div v-for="(char, index) in hex32(currentStep.registersBefore[0])" :key="index" class="hex-char-disp">{{ char }}</div></div>
-            <div class="add-row"><span class="add-label">+ f</span><div v-for="index in 8" :key="index" class="hex-box"><div class="hex-char"></div></div></div>
-            <div class="add-divider"></div>
-            <div class="add-row result"><span class="add-label">T1</span><div v-for="index in 8" :key="index" class="hex-box"><div class="hex-char"></div></div></div>
-          </div>
-        </div>
-      </div>
+            <form class="answer-zone" @submit.prevent="verifyCurrent">
+              <label for="answer">最终答案</label>
+              <div class="answer-row">
+                <input id="answer" ref="answerInput" :value="answer" type="text" maxlength="8" inputmode="text" autocomplete="off" spellcheck="false" placeholder="00000000" @focus="activeEntry = { type: 'answer', index: null }" @input="setAnswer($event.target.value)" />
+                <button class="verify-button" type="submit">验证答案</button>
+              </div>
+              <div v-if="feedback" class="feedback" :class="feedback.ok ? 'ok' : 'wrong'" role="status"><span>{{ feedback.ok ? '✓' : '!' }}</span><p>{{ feedback.message }}</p><button v-if="feedback.ok" type="button" @click="advance">{{ roundIndex === 63 && stageIndex === 5 ? '验证最终摘要' : '下一题 →' }}</button></div>
+            </form>
+          </template>
 
-      <div class="print-page worksheet-continuation">
-        <div class="print-header continuation-header">
-          <div class="print-title">MD5-Scribe 手算工单 · 续页</div>
-          <div class="print-meta"><span>Step: <strong>{{ stepId }} / {{ result.steps.length - 1 }}</strong></span></div>
-        </div>
-        <div class="worksheet-block">
-          <div class="ws-title">步骤 03 — 消息字累加 T2 = T1 + M_j</div>
-          <div class="addition-layout">
-            <div class="add-row"><span class="add-label">T1</span><div v-for="index in 8" :key="index" class="hex-box"><div class="hex-char"></div></div></div>
-            <div class="add-row"><span class="add-label">+ M_j</span><div v-for="(char, index) in hex32(currentStep.mj)" :key="index" class="hex-char-disp">{{ char }}</div></div>
-            <div class="add-divider"></div>
-            <div class="add-row result"><span class="add-label">T2</span><div v-for="index in 8" :key="index" class="hex-box"><div class="hex-char"></div></div></div>
-          </div>
-        </div>
+          <template v-else>
+            <header class="question-header final-header"><div><span class="eyebrow">FINAL CHECK</span><h1>拼接最终 MD5 摘要</h1><p>将 A、B、C、D 分别按小端序输出，再依次拼接。</p></div><span class="step-chip">END</span></header>
+            <section class="final-registers"><div v-for="(register, index) in result.registers" :key="index"><span>{{ ['A','B','C','D'][index] }}</span><strong>{{ hex32(register) }}</strong><small>→ {{ hex32(register).match(/../g).reverse().join('') }}</small></div></section>
+            <form class="answer-zone final-answer" @submit.prevent="verifyFinal"><label for="digest">最终答案 <span>32 位十六进制</span></label><div class="answer-row"><input id="digest" ref="answerInput" :value="answer" type="text" maxlength="32" autocomplete="off" spellcheck="false" placeholder="00000000000000000000000000000000" @input="setAnswer($event.target.value)" /><button class="verify-button" type="submit">完成工单</button></div><div v-if="feedback" class="feedback" :class="feedback.ok ? 'ok' : 'wrong'"><span>{{ feedback.ok ? '✓' : '!' }}</span><p>{{ feedback.message }}</p><button v-if="feedback.ok" type="button" @click="goLobby">返回工单列表</button></div></form>
+          </template>
 
-        <div class="worksheet-block">
-          <div class="ws-title">步骤 04 — 常量累加 T3 = T2 + K_i</div>
-          <div class="addition-layout">
-            <div class="add-row"><span class="add-label">T2</span><div v-for="index in 8" :key="index" class="hex-box"><div class="hex-char"></div></div></div>
-            <div class="add-row"><span class="add-label">+ K_i</span><div v-for="(char, index) in hex32(currentStep.ki)" :key="index" class="hex-char-disp">{{ char }}</div></div>
-            <div class="add-divider"></div>
-            <div class="add-row result"><span class="add-label">T3</span><div v-for="index in 8" :key="index" class="hex-box"><div class="hex-char"></div></div></div>
+          <div class="hex-keyboard" aria-label="十六进制屏幕键盘">
+            <div class="keyboard-meta"><span>HEX KEYBOARD</span><button type="button" @click="keypad('clear')">清空</button><button type="button" @click="keypad('backspace')">⌫ 退格</button></div>
+            <div class="key-row"><button v-for="key in '01234567'" :key="key" type="button" @click="keypad(key)">{{ key }}</button></div>
+            <div class="key-row"><button v-for="key in '89ABCDEF'" :key="key" type="button" @click="keypad(key)">{{ key }}</button></div>
           </div>
-        </div>
+        </article>
+      </section>
+    </main>
 
-        <div class="worksheet-block">
-          <div class="ws-title">步骤 05 — 循环左移 ROT = RotateLeft(T3, {{ currentStep.shift }})</div>
-          <div class="bit-grid-label">T3 (Binary):</div>
-          <div class="bit-grid-32 bit-grid-spacious">
-            <div v-for="index in 32" :key="index" class="bit-slot"><div class="bit-pos">{{ 32 - index }}</div><div class="bit-value"></div></div>
-          </div>
-          <div class="rotate-instruction">将 T3 的 32 位二进制向左循环移动 <strong>{{ currentStep.shift }}</strong> 位。在下方格子中重新排列各位。</div>
-          <div class="bit-grid-label">ROT (Binary):</div>
-          <div class="bit-grid-32 bit-grid-spacious">
-            <div v-for="index in 32" :key="index" class="bit-slot"><div class="bit-pos">{{ 32 - index }}</div><div class="bit-value"></div></div>
-          </div>
-          <div class="hex-row-result"><span>ROT (Hex):</span><div v-for="index in 8" :key="index" class="hex-box"><div class="hex-char"></div></div></div>
-        </div>
-
-        <div class="worksheet-block">
-          <div class="ws-title">步骤 06 — 最终结果 B_new = ROT + B</div>
-          <div class="addition-layout">
-            <div class="add-row"><span class="add-label">ROT</span><div v-for="index in 8" :key="index" class="hex-box"><div class="hex-char"></div></div></div>
-            <div class="add-row"><span class="add-label">+ B</span><div v-for="(char, index) in hex32(currentStep.registersBefore[1])" :key="index" class="hex-char-disp">{{ char }}</div></div>
-            <div class="add-divider"></div>
-            <div class="add-row result"><span class="add-label">B_new</span><div v-for="index in 8" :key="index" class="hex-box"><div class="hex-char"></div></div></div>
-          </div>
+    <aside class="hint-drawer" aria-label="十六进制提示区">
+      <div class="drawer-head"><div><span class="eyebrow">QUICK REFERENCE</span><h2>16 进制提示</h2></div></div>
+      <p>灰色角标是该字符参与加法时可能对应的十进制值。</p>
+      <div class="hex-reference">
+        <div v-for="(hex, index) in '0123456789ABCDEF'" :key="hex" class="hex-ref-card">
+          <span class="decimal-badge">{{ index }} · {{ index + 16 }}</span>
+          <strong>{{ hex }}</strong>
+          <code>{{ index.toString(2).padStart(4, '0') }}</code>
         </div>
       </div>
-
-      <div v-if="stepId === 0" class="print-page reference-page">
-        <div class="print-header"><div class="print-title">附录 — 十六进制-二进制对照表</div></div>
-        <div class="ref-grid">
-          <div v-for="index in 16" :key="index" class="ref-item">
-            <div class="ref-hex">{{ (index - 1).toString(16).toUpperCase() }}</div>
-            <div class="ref-bin">{{ (index - 1).toString(2).padStart(4, '0') }}</div>
-          </div>
-        </div>
-        <div class="ref-notes">
-          <h4>逻辑函数速查</h4>
-          <div class="func-ref">
-            <div><strong>F(B,C,D)</strong> = (B ∧ C) ∨ (¬B ∧ D)</div>
-            <div><strong>G(B,C,D)</strong> = (B ∧ D) ∨ (C ∧ ¬D)</div>
-            <div><strong>H(B,C,D)</strong> = B ⊕ C ⊕ D</div>
-            <div><strong>I(B,C,D)</strong> = C ⊕ (B ∨ ¬D)</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="actions no-print"><button type="button" class="btn btn-primary" @click="requestPrint">再次打印</button><button type="button" class="btn btn-secondary" @click="closePrintWindow">关闭此页</button></div>
-    </template>
-
-    <template v-else-if="page === 'final-print'">
-      <div class="print-controls no-print"><h2>最终 MD5 工单预览</h2><p>请使用浏览器“打印为 PDF”功能保存此工单。</p><button type="button" class="btn btn-primary" @click="requestPrint">立即打印</button></div>
-      <div class="print-page">
-        <div class="print-header"><div class="print-title">MD5-Scribe 最终摘要工单</div></div>
-        <div class="print-section print-message-section">
-          <div class="print-section-heading"><h3>原始消息</h3><span>{{ Array.from(task.message).length }} 字符 · {{ result.messageHex.length / 2 }} bytes</span></div>
-          <div class="message-display-grid">
-            <div class="message-display-row message-text-row"><span class="message-kind">字符串</span><div class="message-text"><span class="message-quote">“</span>{{ task.message }}<span class="message-quote">”</span></div></div>
-            <div class="message-display-row message-hex-row"><span class="message-kind">UTF-8 Hex</span><div class="message-hex mono">{{ formatHexBytes(result.messageHex) }}</div></div>
-          </div>
-        </div>
-        <div class="print-section"><h3>最终 A/B/C/D 寄存器</h3><div class="final-register-grid"><div v-for="row in registerRows()" :key="row.name" class="summary-item"><div class="summary-label">{{ row.name }}</div><div class="summary-value mono">{{ row.word }}</div></div></div></div>
-        <div class="worksheet-block">
-          <div class="ws-title">步骤 01 — 将每个 32 位寄存器按字节反序</div>
-          <div class="final-byte-table">
-            <div v-for="row in registerRows()" :key="row.name" class="final-byte-row">
-              <span class="add-label">{{ row.name }}</span>
-              <div v-for="(byte, index) in row.word.match(/../g)" :key="index" class="hex-char-disp">{{ byte }}</div>
-              <span class="byte-arrow">→</span>
-              <div v-for="index in 4" :key="index" class="hex-box"><div class="hex-char"></div></div>
-            </div>
-          </div>
-        </div>
-        <div class="worksheet-block"><div class="ws-title">步骤 02 — 按 A, B, C, D 的输出字节顺序拼接最终 MD5</div><div class="digest-grid"><div v-for="index in 32" :key="index" class="hex-box"><div class="hex-char"></div></div></div></div>
-      </div>
-      <div class="actions no-print"><button type="button" class="btn btn-primary" @click="requestPrint">再次打印</button><button type="button" class="btn btn-secondary" @click="closePrintWindow">关闭此页</button></div>
-    </template>
-
-    <template v-else-if="page === 'final-verify'">
-      <div class="hero"><h1>最终 MD5 验证</h1><p class="subtitle">将最终 A/B/C/D 按 little-endian 字节顺序拼接。</p></div>
-      <div class="card"><h2>最终寄存器</h2><div class="summary-grid"><div v-for="row in registerRows()" :key="row.name" class="summary-item"><div class="summary-label">{{ row.name }}</div><div class="summary-value mono">{{ row.word }}</div></div></div></div>
-      <div v-if="digestVerification" ref="digestVerificationResult" class="card verification-result" tabindex="-1" role="status" aria-live="polite"><div class="atom-check" :class="digestVerification.ok ? 'atom-ok' : 'atom-error'"><div class="atom-header"><span class="atom-name">最终 MD5</span><span class="atom-badge" :class="digestVerification.ok ? 'badge-ok' : 'badge-error'">{{ digestVerification.ok ? '正确' : '错误' }}</span></div><p v-if="!digestVerification.ok">{{ digestVerification.formatOk ? '结果不匹配，请检查寄存器内部字节反序与 A/B/C/D 拼接顺序。' : '请输入 32 位十六进制字符串。' }}</p></div></div>
-      <div class="card verify-form-card"><form class="verify-form" @submit.prevent="verifyDigest"><div class="form-group atom-group"><label for="digest">MD5 Digest</label><input id="digest" v-model="digestAnswer" type="text" class="mono input-hex digest-input" maxlength="32" placeholder="32 位十六进制" autocomplete="off" autocapitalize="characters" spellcheck="false" @input="digestAnswer = sanitize(digestAnswer, 32)" /><small>例如 A=01234567 在输出中写作 67452301。</small></div><div class="form-actions"><button class="btn btn-primary">提交验证</button><a class="btn btn-secondary" :href="getPrintUrl(true)" target="_blank" rel="noopener" @click="recordPrint(true)">查看最终工单</a></div></form></div>
-    </template>
-
-    <template v-else-if="page === 'report' && task">
-      <div class="hero"><h1>计算报告</h1><p class="subtitle">保存在此设备上的 MD5 手算验证审计踪迹</p></div>
-      <div class="card"><h2>摘要</h2><div class="summary-grid"><div class="summary-item"><div class="summary-label">原始消息</div><div class="summary-value">{{ task.message }}</div></div><div class="summary-item"><div class="summary-label">最终 Hash</div><div class="summary-value mono wrap-anywhere">{{ result.digest }}</div></div><div class="summary-item"><div class="summary-label">完成轮数</div><div class="summary-value">{{ completed.size }} / {{ result.steps.length }}</div></div><div class="summary-item"><div class="summary-label">最终验证</div><div class="summary-value">{{ task.finalVerified ? '已完成' : '未完成' }}</div></div><div class="summary-item"><div class="summary-label">错误记录</div><div class="summary-value">{{ task.logs.length }}</div></div></div></div>
-      <div class="card"><h2>错误类型分析</h2><div v-if="Object.keys(errorCounts).length" class="chart-bars"><div v-for="(count,name) in errorCounts" :key="name" class="bar-row"><span class="bar-label">{{ name }}</span><div class="bar-track"><div class="bar-fill" :style="{ width: `${count / task.logs.length * 100}%` }"></div></div><span class="bar-count">{{ count }}</span></div></div><p v-else>全程零错误。</p></div>
-      <div class="card"><h2>时间线</h2><div class="timeline"><div v-for="item in timeline()" :key="item.step" class="timeline-item" :class="item.completed ? 'completed' : 'incomplete'"><span class="tl-step">Step {{ item.step }}</span><span class="tl-duration">{{ item.duration ? `${item.duration}s` : '未完成' }}</span><span v-if="item.completed" class="tl-status">✓</span></div></div></div>
-      <div class="card"><h2>审计日志</h2><div v-if="task.logs.length" class="log-table-wrapper"><table class="log-table"><thead><tr><th>时间</th><th>Step</th><th>运算</th><th>预期值</th><th>实际值</th><th>差异位数</th></tr></thead><tbody><tr v-for="(log,index) in task.logs" :key="index"><td>{{ formatTime(Date.parse(log.timestamp)) }}</td><td>{{ log.stepIndex }}</td><td>{{ log.atomName }}</td><td class="mono">{{ log.expected }}</td><td class="mono error">{{ log.actual }}</td><td>{{ log.diffBits ?? '-' }}</td></tr></tbody></table></div><p v-else>暂无错误日志。</p></div>
-      <div class="actions"><a v-if="allCompleted" class="btn btn-secondary" :href="getPrintUrl(true)" target="_blank" rel="noopener" @click="recordPrint(true)">查看最终工单</a><button v-else class="btn btn-disabled" disabled>请先完成全部轮次</button><button class="btn btn-secondary" @click="allCompleted && openFinalVerify()">最终验证</button><button class="btn btn-secondary" @click="downloadReport">下载 Markdown</button><button class="btn btn-primary" @click="goHome">返回首页</button></div>
-    </template>
-  </main>
-
-  <footer v-if="page !== 'print' && page !== 'final-print'" class="footer no-print"><p>MD5-Scribe · Local-first · 数据不离开浏览器</p></footer>
+      <div class="drawer-tip"><span>进位提示</span><p>两位十六进制数相加达到 16 时，本列保留余数，并向左进 1。</p></div>
+    </aside>
+  </div>
 </template>

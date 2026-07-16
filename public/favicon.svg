@@ -1,8 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#2563eb"/>
-  <path d="M17 14h24l8 8v28H17z" fill="#fff"/>
-  <path d="M41 14v9h8" fill="#bfdbfe"/>
-  <path d="M24 29h18M24 35h18M24 41h11" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
-  <path d="m37 47 9-9 4 4-9 9-6 2z" fill="#f59e0b" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/>
-  <path d="m46 38 4 4" stroke="#7c2d12" stroke-width="1.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MD5 Scribe">
+  <rect width="64" height="64" rx="12" fill="#17201d"/>
+  <text x="32" y="37" fill="#fffef9" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="20" font-weight="700" text-anchor="middle">MD5</text>
+  <rect x="15" y="45" width="34" height="4" rx="2" fill="#37c978"/>
 </svg>
