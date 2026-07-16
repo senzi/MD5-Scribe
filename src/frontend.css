@@ -218,7 +218,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(49, 91, 214,
 .empty-missions span { color: #dedfd9; font: 500 64px var(--mono); }
 .empty-missions p { max-width: 300px; margin: 8px auto 0; font-size: 13px; }
 
-.game { max-width: 1500px; margin: 0 auto; padding: 10px 20px 24px; }
+.game { max-width: 1500px; margin: 0 auto; padding: 10px 20px 34px; }
 .progress-deck { border: 1px solid var(--line); border-radius: 7px; background: rgba(255,254,249,.88); box-shadow: 0 6px 24px rgba(31,39,35,.045); }
 .progress-deck.collapsed { box-shadow: none; }
 .progress-heading { min-height: 68px; display: flex; align-items: center; gap: 28px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
@@ -391,6 +391,27 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(49, 91, 214,
 .final-answer { padding-top: 22px; }
 .final-answer .answer-row { grid-template-columns: 1fr 128px; }
 .final-answer input { font-size: 14px; letter-spacing: .11em; }
+
+.site-footer {
+  position: fixed;
+  z-index: 40;
+  left: 0;
+  right: 300px;
+  bottom: 0;
+  height: 25px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-top: 1px solid rgba(185, 187, 180, .72);
+  background: rgba(243, 241, 233, .94);
+  color: #858b87;
+  font: 500 8px var(--mono);
+  backdrop-filter: blur(8px);
+}
+.site-footer a { color: #59635e; text-decoration: none; }
+.site-footer a:hover { color: var(--blue); text-decoration: underline; }
+.site-footer i { color: #c0c3bf; font-style: normal; }
 
 .hint-drawer {
   position: fixed;

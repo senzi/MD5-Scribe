@@ -621,6 +621,11 @@ function taskCellCount(task) {
       </section>
     </main>
 
+    <footer class="site-footer">
+      <a href="https://github.com/senzi/MD5-Scribe" target="_blank" rel="noopener noreferrer" title="senzi/MD5-Scribe">GitHub</a>
+      <i>|</i><span>MIT</span><i>|</i><span>vibecoding</span><i>|</i><span>play.md5.moe</span>
+    </footer>
+
     <aside class="hint-drawer" aria-label="十六进制提示区">
       <div class="drawer-head"><div><span class="eyebrow">QUICK REFERENCE</span><h2>16 进制提示</h2></div></div>
       <p>灰色角标是该字符参与加法时可能对应的十进制值。</p>
